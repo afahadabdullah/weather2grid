@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,12 @@ def clean(value: Any) -> Any:
     """Convert pandas/numpy values to strict JSON values."""
     if value is None:
         return None
+    if isinstance(value, (list, tuple)):
+        return [clean(item) for item in value]
+    if hasattr(value, "tolist") and not isinstance(value, (str, bytes)):
+        converted = value.tolist()
+        if isinstance(converted, list):
+            return [clean(item) for item in converted]
     if isinstance(value, float) and not math.isfinite(value):
         return None
     if isinstance(value, (pd.Timestamp, datetime)):
@@ -79,8 +86,8 @@ def banner(any_synthetic: bool, any_ungated: bool) -> dict[str, str]:
     if any_ungated:
         return {
             "level": "warning",
-            "title": "SHADOW MODE — NOT FOR OPERATIONAL USE",
-            "detail": "The model artifact behind this product has not passed its release gate. Guidance only.",
+            "title": "REAL-TIME FORECAST — EXPERIMENTAL",
+            "detail": "The model is running on real-time weather data but has not passed its release gate; do not use it as operational guidance.",
         }
     return {
         "level": "info",
@@ -96,19 +103,9 @@ def records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return [{key: clean(value) for key, value in row.items()} for row in frame.to_dict("records")]
 
 
-def export_archive(archive: Path, output: Path) -> list[dict[str, Any]]:
-    archive = archive.resolve()
-    output = output.resolve()
-    cycle_paths = sorted(archive.glob("*/risk.parquet"))
-    if not cycle_paths:
-        raise SystemExit(f"No */risk.parquet products found under {archive}")
-    if not (archive / "counties.geojson").exists():
-        raise SystemExit(f"Missing shared county geometry: {archive / 'counties.geojson'}")
-
-    if output.exists():
-        shutil.rmtree(output)
-    output.mkdir(parents=True)
-
+def _build_snapshot(archive: Path, cycle_paths: list[Path],
+                    staging: Path) -> list[dict[str, Any]]:
+    """Validate and completely build one not-yet-public snapshot."""
     now = datetime.now(timezone.utc)
     summaries: list[dict[str, Any]] = []
     for risk_path in cycle_paths:
@@ -132,7 +129,7 @@ def export_archive(archive: Path, output: Path) -> list[dict[str, Any]]:
 
         summary = cycle_summary(meta, now)
         summaries.append(summary)
-        target = output / "cycles" / source.name
+        target = staging / "cycles" / source.name
         fields = {
             "required": sorted(required),
             "optional_present": sorted(set(frame.columns) - required),
@@ -158,15 +155,15 @@ def export_archive(archive: Path, output: Path) -> list[dict[str, Any]]:
     summaries.sort(key=lambda item: item["cycle_id"], reverse=True)
     any_synthetic = any(item["synthetic"] for item in summaries)
     any_ungated = any(not item["release_gate_passed"] for item in summaries)
-    write_json(output / "cycles.json", summaries)
+    write_json(staging / "cycles.json", summaries)
     write_json(
-        output / "status.json",
+        staging / "status.json",
         {
             "version": "0.1.0",
             "generated_at_utc": now.isoformat(),
             "cycles": len(summaries),
             "operational": not (any_synthetic or any_ungated),
-            "shadow_mode": True,
+            "shadow_mode": bool(any_ungated and not any_synthetic),
             "any_synthetic": any_synthetic,
             "any_ungated": any_ungated,
             "banner": banner(any_synthetic, any_ungated),
@@ -176,9 +173,40 @@ def export_archive(archive: Path, output: Path) -> list[dict[str, Any]]:
 
     basemap = archive / "basemap.geojson"
     if basemap.exists():
-        shutil.copyfile(basemap, output / "basemap.geojson")
+        shutil.copyfile(basemap, staging / "basemap.geojson")
     else:
-        write_json(output / "basemap.geojson", {"type": "FeatureCollection", "features": []})
+        write_json(staging / "basemap.geojson", {"type": "FeatureCollection", "features": []})
+    return summaries
+
+
+def export_archive(archive: Path, output: Path) -> list[dict[str, Any]]:
+    archive = archive.resolve()
+    output = output.resolve()
+    cycle_paths = sorted(archive.glob("*/risk.parquet"))
+    if not cycle_paths:
+        raise SystemExit(f"No */risk.parquet products found under {archive}")
+    if not (archive / "counties.geojson").exists():
+        raise SystemExit(f"Missing shared county geometry: {archive / 'counties.geojson'}")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    staging = output.with_name(f".{output.name}.tmp-{os.getpid()}")
+    backup = output.with_name(f".{output.name}.backup-{os.getpid()}")
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir()
+
+    try:
+        summaries = _build_snapshot(archive, cycle_paths, staging)
+        if output.exists():
+            os.replace(output, backup)
+        os.replace(staging, output)
+    except Exception:
+        if backup.exists() and not output.exists():
+            os.replace(backup, output)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(backup, ignore_errors=True)
     return summaries
 
 

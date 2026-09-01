@@ -120,9 +120,11 @@ from `prob_outage_fraction_gt_05`, so they remain interactive without an API.
 5. Commit and push `site/data/`.
 
 The page derives its safety banner from product metadata. Synthetic products
-always display **SYNTHETIC DATA — NOT A FORECAST**. Ungated real products
-display **SHADOW MODE — NOT FOR OPERATIONAL USE**. Do not edit the frontend to
-hide either state.
+always display **SYNTHETIC DATA — NOT A FORECAST**. Ungated products driven by
+current real weather display **REAL-TIME FORECAST — EXPERIMENTAL** together
+with an explicit statement that the model has not passed its release gate and
+must not be used as operational guidance. Do not edit the frontend to hide
+either state.
 
 Before publishing real products, verify that county-level customer data and
 utility information are approved for public release. Never commit secrets,
