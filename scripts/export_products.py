@@ -104,7 +104,7 @@ def records(frame: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def _build_snapshot(archive: Path, cycle_paths: list[Path],
-                    staging: Path) -> list[dict[str, Any]]:
+                    staging: Path, output: Path) -> list[dict[str, Any]]:
     """Validate and completely build one not-yet-public snapshot."""
     now = datetime.now(timezone.utc)
     summaries: list[dict[str, Any]] = []
@@ -171,9 +171,18 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
         },
     )
 
+    # basemap.geojson is static site chrome (coastlines/state outlines) that
+    # a StormGrid product archive has never been responsible for producing -
+    # nothing in stormgrid writes one. Only fall back to an empty
+    # FeatureCollection when there is truly nothing to keep; otherwise an
+    # archive that (correctly) omits it would silently blank out the map's
+    # base layer on every export.
     basemap = archive / "basemap.geojson"
+    existing_basemap = output / "basemap.geojson"
     if basemap.exists():
         shutil.copyfile(basemap, staging / "basemap.geojson")
+    elif existing_basemap.exists():
+        shutil.copyfile(existing_basemap, staging / "basemap.geojson")
     else:
         write_json(staging / "basemap.geojson", {"type": "FeatureCollection", "features": []})
     return summaries
@@ -196,7 +205,7 @@ def export_archive(archive: Path, output: Path) -> list[dict[str, Any]]:
     staging.mkdir()
 
     try:
-        summaries = _build_snapshot(archive, cycle_paths, staging)
+        summaries = _build_snapshot(archive, cycle_paths, staging, output)
         if output.exists():
             os.replace(output, backup)
         os.replace(staging, output)

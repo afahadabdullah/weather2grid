@@ -56,6 +56,43 @@ def test_ungated_real_product_uses_experimental_banner() -> None:
     assert "not passed its release gate" in value["detail"]
 
 
+def test_archive_without_basemap_keeps_existing_site_basemap(tmp_path: Path) -> None:
+    # No stormgrid archive publishes basemap.geojson today - it is static
+    # site chrome, not part of the product contract. A real export must not
+    # blank out an already-good basemap just because the archive lacks one.
+    archive = tmp_path / "products"
+    cycle = archive / "20260101T0000Z"
+    cycle.mkdir(parents=True)
+    (archive / "counties.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+    (cycle / "cycle.json").write_text(json.dumps({
+        "cycle_id": cycle.name,
+        "event_id": "event-1",
+        "event_name": "Live test",
+        "forecast_init_time_utc": "2026-01-01T00:00:00+00:00",
+        "synthetic": False,
+        "release_gate_passed": False,
+    }))
+    pd.DataFrame([{
+        "county_fips": "1001",
+        "county_name": "Autauga",
+        "state": "AL",
+        "expected_customers_out": 10.0,
+        "p90_customers_out": 20.0,
+        "prob_outage_fraction_gt_05": 0.4,
+        "peak_gust_ms": 30.0,
+        "q50_outage_fraction": 0.08,
+    }]).to_parquet(cycle / "risk.parquet")
+
+    output = tmp_path / "site-data"
+    output.mkdir()
+    rich_basemap = '{"type":"FeatureCollection","features":[{"type":"Feature"}]}'
+    (output / "basemap.geojson").write_text(rich_basemap)
+
+    export_archive(archive, output)
+
+    assert (output / "basemap.geojson").read_text() == rich_basemap
+
+
 def test_failed_export_preserves_previous_snapshot(tmp_path: Path) -> None:
     archive = tmp_path / "bad-products"
     cycle = archive / "20260101T0000Z"
