@@ -1,0 +1,30 @@
+{
+  "version": "0.1.0",
+  "generated_at_utc": "2026-09-01T01:29:09.020931+00:00",
+  "cycles": 8,
+  "operational": false,
+  "shadow_mode": true,
+  "any_synthetic": true,
+  "any_ungated": true,
+  "banner": {
+    "level": "critical",
+    "title": "SYNTHETIC DATA — NOT A FORECAST",
+    "detail": "Every number on this page was generated for development. It describes no real storm and no real grid."
+  },
+  "latest": {
+    "cycle_id": "20260831T2100Z",
+    "event_id": "DE20170123003",
+    "event_name": "SYNTHETIC STORM ALPHA",
+    "issued_utc": "2026-08-31T21:00:00+00:00",
+    "lead_hours": 0,
+    "age_hours": 4.49,
+    "freshness": "current",
+    "synthetic": true,
+    "release_gate_passed": false,
+    "degraded_mode": false,
+    "provider_status": "ok",
+    "model_artifact_id": "bplus-synthetic-20260830",
+    "hazard_source": "synthetic_holland",
+    "training_data_cutoff_utc": "2024-12-28 00:00:00+00:00"
+  }
+}
