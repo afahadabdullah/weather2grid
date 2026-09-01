@@ -9,6 +9,7 @@ const S = {
   loadToken: 0, curve: null,
   overlays: { states: true, track: true, wind: true, extrapolation: true },
   view: 'event', zoom: 1, panX: 0, panY: 0, dragging: null,
+  countiesGeoProjected: null, statesGeoProjected: null,
 };
 
 const LAYERS = [
@@ -123,6 +124,7 @@ async function loadCycle(index) {
   ]);
   if (token !== S.loadToken) return;
   S.idx = i; S.cycle = cycle; S.counties = counties; S.geo = geo;
+  S.countiesGeoProjected = null;
   S.track = track && track.available !== false ? track : null; S.curve = null;
   S.byFips = new Map(counties.map((row) => [String(row.county_fips), row]));
   $('cycle').value = String(i);
@@ -312,8 +314,9 @@ function drawMap() {
     }
     return { bounds, paths };
   };
-  const countiesGeo = projectCollection(S.geo, 'county_fips');
-  const statesGeo = projectCollection(S.basemap, 'state');
+  if (!S.countiesGeoProjected) S.countiesGeoProjected = projectCollection(S.geo, 'county_fips');
+  if (!S.statesGeoProjected) S.statesGeoProjected = projectCollection(S.basemap, 'state');
+  const countiesGeo = S.countiesGeoProjected, statesGeo = S.statesGeoProjected;
   const storm = stormMeta(), track = storm && Array.isArray(storm.track) ? storm.track : [];
   let bounds = S.view === 'conus' && statesGeo.paths.length ? [...statesGeo.bounds] : [...countiesGeo.bounds];
   if (S.view === 'storm' && track.length) track.forEach((point) => {
@@ -335,6 +338,7 @@ function drawMap() {
     out += '</g>';
   }
   out += `<g transform="translate(${ox} ${oy}) scale(${scale}) translate(${-x0} ${-y0})">`;
+  const hatchParts = [];
   for (const path of countiesGeo.paths) {
     const row = S.byFips.get(path.id), value = row ? row[layer.key] : null;
     const fill = value == null ? '#12232f' : rampColor(stops, (value - lo) / ((hi - lo) || 1));
@@ -343,8 +347,13 @@ function drawMap() {
     if (S.selected === path.id) classes.push('sel');
     const title = row ? `${row.county_name}, ${row.state} — ${layer.label}: ${fmt(value, layer.fmt)}` : path.id;
     out += `<path class="${classes.join(' ')}" d="${path.d}" fill="${fill}" vector-effect="non-scaling-stroke" data-fips="${esc(path.id)}" tabindex="0"><title>${esc(title)}</title></path>`;
-    if (S.overlays.extrapolation && row && row.training_envelope_flag !== 'inside') out += `<path d="${path.d}" fill="url(#hatch)" pointer-events="none" stroke="none"/>`;
+    if (S.overlays.extrapolation && row && row.training_envelope_flag !== 'inside') hatchParts.push(path.d);
   }
+  // One combined path for every hatched county instead of one <path> each -
+  // with real CONUS coverage the vast majority of counties sit outside a
+  // synthetic-trained envelope, so this was routinely thousands of extra
+  // stacked elements the browser had to lay out and paint on every redraw.
+  if (hatchParts.length) out += `<path d="${hatchParts.join(' ')}" fill="url(#hatch)" pointer-events="none" stroke="none"/>`;
   out += '</g>';
   if (track.length) out += drawStormOverlay(track, storm, screen, scale);
   out += '</g>';
