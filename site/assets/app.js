@@ -864,17 +864,29 @@ function drawMapCanvas() {
   const countyStroke = isDark ? '#081119' : '#cbd5e1';
   const strokeWidth = 0.5 / S.zoom;
 
+  const hasTriggered = S.overlays.threshold !== false && S.triggered.size > 0;
+
   // 1. Draw Counties Base Fills
   for (const c of S.projectedCounties) {
     const row = S.byFips.get(c.fips);
     const val = row ? row[layer.key] : null;
+    const isTrig = S.triggered.has(c.fips);
+
+    ctx.save();
+    // Shaded color contrast: triggered counties shine at 100% brightness,
+    // untriggered counties soften to 45% opacity so triggered areas pop visually
+    if (hasTriggered && !isTrig) {
+      ctx.globalAlpha = isDark ? 0.42 : 0.50;
+    }
+
     ctx.fillStyle = val == null ? baseFill : rampColor(stops, (val - lo) / ((hi - lo) || 1));
     ctx.fill(c.path);
 
-    // Stroke
+    // Natural clean county boundary (never thick, never yellow)
     ctx.strokeStyle = countyStroke;
     ctx.lineWidth = strokeWidth;
     ctx.stroke(c.path);
+    ctx.restore();
   }
 
   // 2. Extrapolation Hatching
@@ -890,36 +902,13 @@ function drawMapCanvas() {
     ctx.restore();
   }
 
-  // 3. Triggered Counties (Threshold Highlight)
-  if (S.overlays.threshold !== false && S.triggered.size > 0) {
+  // 3. Triggered Counties (Pure Shaded Color Overlay — NO lines, NO dots)
+  if (hasTriggered) {
     ctx.save();
-    // A. Delicate, ultra-fine boundary hairline (0.75px constant screen width, NO thick boxes, NO blur)
-    ctx.strokeStyle = isDark ? 'rgba(251, 191, 36, 0.55)' : 'rgba(217, 119, 6, 0.6)';
-    ctx.lineWidth = 0.75 / S.zoom;
+    ctx.fillStyle = isDark ? 'rgba(251, 191, 36, 0.18)' : 'rgba(245, 158, 11, 0.16)';
     for (const c of S.projectedCounties) {
       if (S.triggered.has(c.fips)) {
-        ctx.stroke(c.path);
-      }
-    }
-
-    // B. Centroid Alert Radar Pip: small beacon dot at county center
-    // Leaves the interior shaded colors 100% clear and unobstructed!
-    for (const c of S.projectedCounties) {
-      if (S.triggered.has(c.fips)) {
-        const [cx, cy] = c.centroid;
-        // Soft outer amber halo
-        ctx.beginPath();
-        ctx.arc(cx, cy, 4.5 / S.zoom, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(251, 191, 36, 0.22)';
-        ctx.fill();
-        // Crisp center alert pip
-        ctx.beginPath();
-        ctx.arc(cx, cy, 2 / S.zoom, 0, Math.PI * 2);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fill();
-        ctx.strokeStyle = isDark ? '#081119' : '#ffffff';
-        ctx.lineWidth = 0.6 / S.zoom;
-        ctx.stroke();
+        ctx.fill(c.path);
       }
     }
     ctx.restore();
