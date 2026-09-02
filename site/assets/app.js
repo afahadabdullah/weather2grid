@@ -330,7 +330,18 @@ function drawMap() {
   const ox = pad + ((W - pad * 2) - (x1 - x0) * scale) / 2, oy = pad + ((H - pad * 2) - (y1 - y0) * scale) / 2;
   const screen = (lon, lat) => { const [x, y] = proj(lon, lat); return [ox + (x - x0) * scale, oy + (y - y0) * scale]; };
   const layer = activeLayer(), [lo, hi] = layerDomain(layer), stops = RAMPS[layer.ramp];
-  let out = `<defs><pattern id="hatch" width="5" height="5" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="5" stroke="#d9edf1" stroke-width="1" opacity=".45"/></pattern></defs>`;
+  // The hatch <path> lives inside the <g> that applies `scale` to go from
+  // the Albers plane (the whole CONUS spans well under 1 unit there) to
+  // screen pixels, and patternUnits="userSpaceOnUse" resolves against that
+  // SAME pre-scale coordinate system - so a literal "5" tile is 5 raw
+  // Albers-plane units, not 5 screen pixels. At the real CONUS scale
+  // (~1100x) that is a several-thousand-pixel tile: the whole visible map
+  // shows only a sliver of one oversized diagonal stroke, which is the hard
+  // "shaded" wedge seen in production. Divide by `scale` so the tile is a
+  // constant ~6 screen pixels regardless of projection scale, matching what
+  // the "5"/"1" literals actually intended.
+  const hatchTile = 6 / scale;
+  let out = `<defs><pattern id="hatch" width="${hatchTile}" height="${hatchTile}" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="${hatchTile}" stroke="#d9edf1" stroke-width="${hatchTile / 5}" opacity=".45"/></pattern></defs>`;
   out += `<g class="map-viewport" transform="translate(${S.panX} ${S.panY}) scale(${S.zoom})">`;
   if (S.overlays.states && statesGeo.paths.length) {
     out += `<g class="state-layer" transform="translate(${ox} ${oy}) scale(${scale}) translate(${-x0} ${-y0})">`;
@@ -353,7 +364,17 @@ function drawMap() {
   // with real CONUS coverage the vast majority of counties sit outside a
   // synthetic-trained envelope, so this was routinely thousands of extra
   // stacked elements the browser had to lay out and paint on every redraw.
-  if (hatchParts.length) out += `<path d="${hatchParts.join(' ')}" fill="url(#hatch)" pointer-events="none" stroke="none"/>`;
+  // evenodd, not the SVG default nonzero: Census cartographic-boundary rings
+  // don't consistently follow a single winding direction, so combining
+  // ~2856 disjoint county subpaths into one <path> can, in principle, let
+  // mismatched winding between neighboring counties overlap incorrectly
+  // under nonzero fill. This did NOT turn out to be the cause of the
+  // diagonal "shaded" wedge seen in production (verified by rendering both
+  // fill-rules against real geometry - both looked identical and correct;
+  // the actual cause was the pattern-tile scale bug fixed above via
+  // `hatchTile`). Kept anyway since evenodd is the more correct choice for
+  // a combined multi-ring path regardless, and costs nothing here.
+  if (hatchParts.length) out += `<path d="${hatchParts.join(' ')}" fill="url(#hatch)" fill-rule="evenodd" pointer-events="none" stroke="none"/>`;
   out += '</g>';
   if (track.length) out += drawStormOverlay(track, storm, screen, scale);
   out += '</g>';
