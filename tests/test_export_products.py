@@ -111,3 +111,63 @@ def test_failed_export_preserves_previous_snapshot(tmp_path: Path) -> None:
 
     assert (output / "last-good.txt").read_text() == "keep me"
     assert not list(tmp_path.glob(".site-data.tmp-*"))
+
+
+def test_export_archive_merge_preserves_existing_cycles(tmp_path: Path) -> None:
+    # First export cycle 1
+    archive1 = tmp_path / "archive1"
+    cycle1 = archive1 / "20260101T0000Z"
+    cycle1.mkdir(parents=True)
+    (archive1 / "counties.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+    (cycle1 / "cycle.json").write_text(json.dumps({
+        "cycle_id": cycle1.name,
+        "event_id": "event-1",
+        "forecast_init_time_utc": "2026-01-01T00:00:00+00:00",
+        "synthetic": False,
+        "release_gate_passed": False,
+    }))
+    pd.DataFrame([{
+        "county_fips": "01001",
+        "county_name": "Autauga",
+        "state": "AL",
+        "expected_customers_out": 10.0,
+        "p90_customers_out": 20.0,
+        "prob_outage_fraction_gt_05": 0.4,
+        "peak_gust_ms": 30.0,
+    }]).to_parquet(cycle1 / "risk.parquet")
+
+    output = tmp_path / "site-data"
+    export_archive(archive1, output)
+
+    # Now export cycle 2 with merge=True
+    archive2 = tmp_path / "archive2"
+    cycle2 = archive2 / "20260101T0600Z"
+    cycle2.mkdir(parents=True)
+    (archive2 / "counties.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+    (cycle2 / "cycle.json").write_text(json.dumps({
+        "cycle_id": cycle2.name,
+        "event_id": "event-1",
+        "forecast_init_time_utc": "2026-01-01T06:00:00+00:00",
+        "synthetic": False,
+        "release_gate_passed": False,
+    }))
+    pd.DataFrame([{
+        "county_fips": "01001",
+        "county_name": "Autauga",
+        "state": "AL",
+        "expected_customers_out": 15.0,
+        "p90_customers_out": 25.0,
+        "prob_outage_fraction_gt_05": 0.5,
+        "peak_gust_ms": 35.0,
+    }]).to_parquet(cycle2 / "risk.parquet")
+
+    summaries = export_archive(archive2, output, merge=True)
+
+    assert len(summaries) == 2
+    assert [s["cycle_id"] for s in summaries] == ["20260101T0600Z", "20260101T0000Z"]
+    status = json.loads((output / "status.json").read_text())
+    assert status["cycles"] == 2
+    assert status["latest"]["cycle_id"] == "20260101T0600Z"
+    assert (output / "cycles" / "20260101T0000Z" / "counties.json").exists()
+    assert (output / "cycles" / "20260101T0600Z" / "counties.json").exists()
+

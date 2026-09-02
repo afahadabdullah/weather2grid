@@ -104,12 +104,15 @@ def records(frame: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def _build_snapshot(archive: Path, cycle_paths: list[Path],
-                    staging: Path, output: Path) -> list[dict[str, Any]]:
+                    staging: Path, output: Path,
+                    merge: bool = False) -> list[dict[str, Any]]:
     """Validate and completely build one not-yet-public snapshot."""
     now = datetime.now(timezone.utc)
     summaries: list[dict[str, Any]] = []
+    processed_cycles: set[str] = set()
     for risk_path in cycle_paths:
         source = risk_path.parent
+        processed_cycles.add(source.name)
         meta_path = source / "cycle.json"
         if not meta_path.exists():
             raise SystemExit(f"Missing product metadata: {meta_path}")
@@ -152,6 +155,21 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
         else:
             write_json(target / "track.json", {"available": False, "reason": "no track in this product"})
 
+    if merge and (output / "cycles").exists():
+        for existing_dir in sorted((output / "cycles").iterdir()):
+            if not existing_dir.is_dir() or existing_dir.name in processed_cycles:
+                continue
+            dest_dir = staging / "cycles" / existing_dir.name
+            shutil.copytree(existing_dir, dest_dir)
+            meta_file = dest_dir / "cycle.json"
+            if meta_file.exists():
+                existing_cycle_data = json.loads(meta_file.read_text(encoding="utf-8"))
+                meta = existing_cycle_data.get("meta", existing_cycle_data)
+                summary = cycle_summary(meta, now)
+                existing_cycle_data.update(summary)
+                write_json(meta_file, existing_cycle_data)
+                summaries.append(summary)
+
     summaries.sort(key=lambda item: item["cycle_id"], reverse=True)
     any_synthetic = any(item["synthetic"] for item in summaries)
     any_ungated = any(not item["release_gate_passed"] for item in summaries)
@@ -188,7 +206,7 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
     return summaries
 
 
-def export_archive(archive: Path, output: Path) -> list[dict[str, Any]]:
+def export_archive(archive: Path, output: Path, merge: bool = False) -> list[dict[str, Any]]:
     archive = archive.resolve()
     output = output.resolve()
     cycle_paths = sorted(archive.glob("*/risk.parquet"))
@@ -205,7 +223,7 @@ def export_archive(archive: Path, output: Path) -> list[dict[str, Any]]:
     staging.mkdir()
 
     try:
-        summaries = _build_snapshot(archive, cycle_paths, staging, output)
+        summaries = _build_snapshot(archive, cycle_paths, staging, output, merge=merge)
         if output.exists():
             os.replace(output, backup)
         os.replace(staging, output)
@@ -224,8 +242,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", type=Path, required=True, help="StormGrid product archive")
     parser.add_argument("--output", type=Path, default=root / "site" / "data", help="Static data destination")
+    parser.add_argument("--merge", action="store_true", help="Merge with existing exported cycles in output")
     args = parser.parse_args()
-    summaries = export_archive(args.archive, args.output)
+    summaries = export_archive(args.archive, args.output, merge=args.merge)
     print(f"Exported {len(summaries)} forecast cycles to {args.output.resolve()}")
 
 

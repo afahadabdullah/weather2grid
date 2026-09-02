@@ -1,0 +1,61 @@
+{
+  "storm_id": "HRRRLOW-20260901T2100Z",
+  "name": "Automated HRRR low detection - not an official forecast",
+  "classification": "Surface low (HRRR-derived, experimental)",
+  "event_id": "hrrr-conus-20260901",
+  "event_name": "CONUS wind outlook",
+  "current_index": 0,
+  "points": [
+    {
+      "valid_utc": "2026-09-01T21:00:00+00:00",
+      "lat": 42.817,
+      "lon": -115.667,
+      "vmax_kt": 23,
+      "pmin_mb": 1003,
+      "r34_nm": 0,
+      "r50_nm": 0,
+      "r64_nm": 0,
+      "stage": "Weak Low",
+      "lead_hours": 0
+    },
+    {
+      "valid_utc": "2026-09-01T22:00:00+00:00",
+      "lat": 42.864,
+      "lon": -115.717,
+      "vmax_kt": 23,
+      "pmin_mb": 1001,
+      "r34_nm": 0,
+      "r50_nm": 0,
+      "r64_nm": 0,
+      "stage": "Weak Low",
+      "lead_hours": 1
+    },
+    {
+      "valid_utc": "2026-09-01T23:00:00+00:00",
+      "lat": 42.864,
+      "lon": -115.717,
+      "vmax_kt": 32,
+      "pmin_mb": 1000,
+      "r34_nm": 0,
+      "r50_nm": 0,
+      "r64_nm": 0,
+      "stage": "Weak Low",
+      "lead_hours": 2
+    },
+    {
+      "valid_utc": "2026-09-02T00:00:00+00:00",
+      "lat": 42.849,
+      "lon": -115.638,
+      "vmax_kt": 36,
+      "pmin_mb": 1000,
+      "r34_nm": 0,
+      "r50_nm": 0,
+      "r64_nm": 0,
+      "stage": "Strong Low",
+      "lead_hours": 3
+    }
+  ],
+  "experimental": true,
+  "source": "hrrr_mslma_gust_automated_detection",
+  "synthetic": false
+}
