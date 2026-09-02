@@ -7,7 +7,12 @@ const S = {
   byFips: new Map(), layer: 'expected_customers_out', ratio: 0.15,
   triggered: new Set(), selected: null, playing: false, timer: null,
   loadToken: 0, curve: null,
-  overlays: { states: true, track: true, wind: true, extrapolation: true },
+  // extrapolation defaults OFF: with real HRRR cycles, the vast majority of
+  // counties sit outside the model's synthetic training envelope (a data
+  // fact, not a bug), so leaving this on by default hatches almost the whole
+  // map and drowns out the risk-color read it's meant to sit on top of. The
+  // toggle still exists for anyone who wants to see the coverage gap.
+  overlays: { states: true, track: true, wind: true, extrapolation: false },
   view: 'event', zoom: 1, panX: 0, panY: 0, dragging: null,
   countiesGeoProjected: null, statesGeoProjected: null,
 };
@@ -341,7 +346,11 @@ function drawMap() {
   // constant ~6 screen pixels regardless of projection scale, matching what
   // the "5"/"1" literals actually intended.
   const hatchTile = 6 / scale;
-  let out = `<defs><pattern id="hatch" width="${hatchTile}" height="${hatchTile}" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="${hatchTile}" stroke="#d9edf1" stroke-width="${hatchTile / 5}" opacity=".45"/></pattern></defs>`;
+  // Lighter than before (opacity .45 -> .22): now that this overlay is
+  // opt-in rather than on by default, when someone does turn it on for a
+  // cycle where it covers most counties it should still read as a subtle
+  // texture, not a second layer competing with the risk-color fill.
+  let out = `<defs><pattern id="hatch" width="${hatchTile}" height="${hatchTile}" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="${hatchTile}" stroke="#d9edf1" stroke-width="${hatchTile / 5}" opacity=".22"/></pattern></defs>`;
   out += `<g class="map-viewport" transform="translate(${S.panX} ${S.panY}) scale(${S.zoom})">`;
   if (S.overlays.states && statesGeo.paths.length) {
     out += `<g class="state-layer" transform="translate(${ox} ${oy}) scale(${scale}) translate(${-x0} ${-y0})">`;
