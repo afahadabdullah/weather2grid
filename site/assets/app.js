@@ -386,12 +386,28 @@ function drawMap() {
   if (!S.statesGeoProjected) S.statesGeoProjected = projectCollection(S.basemap, 'state');
   const countiesGeo = S.countiesGeoProjected, statesGeo = S.statesGeoProjected;
   const storm = stormMeta(), track = storm && Array.isArray(storm.track) ? storm.track : [];
-  let bounds = S.view === 'conus' && statesGeo.paths.length ? [...statesGeo.bounds] : [...countiesGeo.bounds];
-  if (S.view === 'storm' && track.length) track.forEach((point) => {
-    const [x, y] = proj(point.lon, point.lat), radius = Math.max(0, point.uncertainty_km || 0) / 6371;
-    bounds[0] = Math.min(bounds[0], x - radius); bounds[1] = Math.min(bounds[1], y - radius);
-    bounds[2] = Math.max(bounds[2], x + radius); bounds[3] = Math.max(bounds[3], y + radius);
-  });
+  let bounds;
+  if (S.view === 'storm' && track.length) {
+    bounds = [Infinity, Infinity, -Infinity, -Infinity];
+    track.forEach((point) => {
+      const [x, y] = proj(point.lon, point.lat);
+      const windKm = Math.max(point.uncertainty_km || 0, (storm.wind_radii_km && storm.wind_radii_km['34kt']) || 150);
+      const radius = (windKm + 180) / 6371;
+      bounds[0] = Math.min(bounds[0], x - radius); bounds[1] = Math.min(bounds[1], y - radius);
+      bounds[2] = Math.max(bounds[2], x + radius); bounds[3] = Math.max(bounds[3], y + radius);
+    });
+  } else if (S.view === 'conus' && statesGeo.paths.length) {
+    bounds = [...statesGeo.bounds];
+  } else {
+    bounds = [...countiesGeo.bounds];
+    if (track.length && S.overlays.track) {
+      track.forEach((point) => {
+        const [x, y] = proj(point.lon, point.lat), radius = Math.max(0, point.uncertainty_km || 0) / 6371;
+        bounds[0] = Math.min(bounds[0], x - radius); bounds[1] = Math.min(bounds[1], y - radius);
+        bounds[2] = Math.max(bounds[2], x + radius); bounds[3] = Math.max(bounds[3], y + radius);
+      });
+    }
+  }
   let [x0, y0, x1, y1] = bounds;
   const pad = 28, sx = (W - pad * 2) / (x1 - x0 || 1), sy = (H - pad * 2) / (y1 - y0 || 1), scale = Math.min(sx, sy);
   S.mapScale = scale;
