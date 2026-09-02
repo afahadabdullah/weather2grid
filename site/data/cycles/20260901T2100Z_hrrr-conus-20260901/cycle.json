@@ -4,7 +4,7 @@
   "event_name": "CONUS wind outlook",
   "issued_utc": "2026-09-01T21:00:00+00:00",
   "lead_hours": 0.0,
-  "age_hours": 7.71,
+  "age_hours": 7.98,
   "freshness": "degraded",
   "synthetic": false,
   "release_gate_passed": false,
@@ -139,5 +139,28 @@
   "valid_end_utc": "2026-09-02T15:00:00+00:00",
   "forecast_window_hours": 18.0,
   "forecast_horizon_hours": 18.0,
-  "track_available": true
+  "track_available": true,
+  "input_lead_hours": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18
+  ],
+  "lead_step_hours": 1.0,
+  "display_frame_count": 1
 }

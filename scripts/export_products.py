@@ -72,6 +72,25 @@ def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
             horizon_hours = round((end - init).total_seconds() / 3600, 2)
     except (TypeError, ValueError):
         pass
+    input_leads = meta.get("input_lead_hours")
+    lead_step = meta.get("lead_step_hours")
+    if not isinstance(input_leads, list):
+        source = str(meta.get("hazard_source", "")).lower()
+        if source.startswith("hrrr"):
+            lead_step = 1.0
+        elif source.startswith("weathernext"):
+            lead_step = 6.0
+        if lead_step and issued and valid_start and valid_end:
+            try:
+                init = pd.Timestamp(issued)
+                start = pd.Timestamp(valid_start)
+                end = pd.Timestamp(valid_end)
+                first = round((start - init).total_seconds() / 3600)
+                last = round((end - init).total_seconds() / 3600)
+                input_leads = list(range(first, last + 1, round(float(lead_step))))
+            except (TypeError, ValueError):
+                input_leads = []
+    input_leads = input_leads if isinstance(input_leads, list) else []
     return {
         "cycle_id": str(meta["cycle_id"]),
         "event_id": str(meta.get("event_id", "unknown")),
@@ -91,8 +110,39 @@ def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
         "valid_end_utc": valid_end,
         "forecast_window_hours": window_hours,
         "forecast_horizon_hours": horizon_hours,
+        "input_lead_hours": clean(input_leads),
+        "lead_step_hours": clean(lead_step),
+        "display_frame_count": 1,
         "training_data_cutoff_utc": meta.get("training_data_cutoff_utc"),
     }
+
+
+def _series_key(summary: dict[str, Any]) -> str:
+    """Identify windows that belong to the same forecast initialization series."""
+    return str(summary.get("hazard_source", ""))
+
+
+def _discard_older_initializations(summaries: list[dict[str, Any]], staging: Path) -> list[dict[str, Any]]:
+    """Keep every window from the newest initialization, and remove older runs."""
+    newest: dict[str, float] = {}
+    issued_values: dict[str, float] = {}
+    for summary in summaries:
+        try:
+            issued = pd.Timestamp(summary.get("issued_utc"))
+            value = issued.timestamp() if not pd.isna(issued) else float("-inf")
+        except (TypeError, ValueError):
+            value = float("-inf")
+        issued_values[str(summary["cycle_id"])] = value
+        key = _series_key(summary)
+        newest[key] = max(newest.get(key, float("-inf")), value)
+
+    kept: list[dict[str, Any]] = []
+    for summary in summaries:
+        if issued_values[str(summary["cycle_id"])] == newest[_series_key(summary)]:
+            kept.append(summary)
+            continue
+        shutil.rmtree(staging / "cycles" / str(summary["cycle_id"]), ignore_errors=True)
+    return kept
 
 
 def banner(any_synthetic: bool, any_ungated: bool) -> dict[str, str]:
@@ -210,6 +260,7 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
                 write_json(meta_file, existing_cycle_data)
                 summaries.append(summary)
 
+    summaries = _discard_older_initializations(summaries, staging)
     summaries.sort(key=lambda item: item["cycle_id"], reverse=True)
     any_synthetic = any(item["synthetic"] for item in summaries)
     any_ungated = any(not item["release_gate_passed"] for item in summaries)

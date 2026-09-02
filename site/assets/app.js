@@ -6,7 +6,7 @@ const S = {
   basemap: null, track: null,
   byFips: new Map(), layer: 'peak_gust_ms', ratio: 0.15,
   triggered: new Set(), selected: null, playing: false, timer: null,
-  loadToken: 0, curve: null,
+  loadToken: 0, curve: null, trackFrame: null,
   activeProvider: null,
   // extrapolation defaults OFF: with real HRRR cycles, the vast majority of
   // counties sit outside the model's synthetic training envelope (a data
@@ -55,8 +55,12 @@ function frameStartMs(cycle) {
 }
 
 function providerFrameIndices(providerId = S.activeProvider) {
-  return S.cycles.map((cycle, index) => ({ cycle, index }))
-    .filter(({ cycle }) => providerFor(cycle.hazard_source).id === providerId)
+  const matches = S.cycles.map((cycle, index) => ({ cycle, index }))
+    .filter(({ cycle }) => providerFor(cycle.hazard_source).id === providerId);
+  if (!matches.length) return [];
+  const latestInit = Math.max(...matches.map(({ cycle }) => Date.parse(cycle.issued_utc) || 0));
+  return matches
+    .filter(({ cycle }) => (Date.parse(cycle.issued_utc) || 0) === latestInit)
     .sort((a, b) => frameStartMs(a.cycle) - frameStartMs(b.cycle))
     .map(({ index }) => index);
 }
@@ -64,19 +68,14 @@ function providerFrameIndices(providerId = S.activeProvider) {
 function providerCoverage(providerId) {
   const frames = providerFrameIndices(providerId).map((index) => S.cycles[index]);
   if (!frames.length) return 'not in archive';
-  const inits = new Set(frames.map((cycle) => cycle.issued_utc));
-  const spans = frames.map((cycle) => {
-    const start = Date.parse(cycle.valid_start_utc), end = Date.parse(cycle.valid_end_utc);
-    return start && end ? Math.round((end - start) / 36e5) : null;
-  }).filter((value) => value != null);
+  const inputs = frames.reduce((sum, cycle) => sum
+    + (Array.isArray(cycle.input_lead_hours) ? cycle.input_lead_hours.length : 0), 0);
   if (providerId === 'weathernext2') {
-    const init = Math.min(...frames.map((cycle) => Date.parse(cycle.issued_utc) || Infinity));
-    const end = Math.max(...frames.map((cycle) => Date.parse(cycle.valid_end_utc) || frameStartMs(cycle)));
-    const horizon = Number.isFinite(init) ? Math.round((end - init) / 36e5) : null;
-    return `${frames.length} forecast windows${horizon ? ` · through +${horizon}h` : ''}`;
+    return `latest initialization · ${inputs || 'unknown'} model leads · ${frames.length} map windows`;
   }
-  const span = spans.length && spans.every((value) => value === spans[0]) ? ` · ${spans[0]}h each` : '';
-  return `${inits.size} model run${inits.size === 1 ? '' : 's'}${span}`;
+  const trackFrames = providerId === S.activeProvider && S.track && Array.isArray(S.track.points)
+    ? S.track.points.length : null;
+  return `latest initialization · ${inputs || 'unknown'} model leads${trackFrames ? ` · ${trackFrames} track frames` : ''}`;
 }
 
 // WeatherNext 2 publishes 100 m sustained wind, which the adapter carries in
@@ -153,8 +152,8 @@ async function boot() {
   const slider = $('cycle');
   slider.addEventListener('input', () => {
     stopPlayback();
-    const frames = providerFrameIndices();
-    if (frames[+slider.value] != null) loadCycle(frames[+slider.value]);
+    const frames = activeFrames();
+    if (frames[+slider.value]) selectFrame(frames[+slider.value]);
   });
   $('cycle-prev').addEventListener('click', () => { stopPlayback(); stepCycle(-1); });
   $('cycle-next').addEventListener('click', () => { stopPlayback(); stepCycle(1); });
@@ -185,19 +184,47 @@ function showBanner(banner) {
 }
 
 function buildCycleDots() {
-  const frames = providerFrameIndices();
-  $('cycle-dots').innerHTML = frames.map((index) => {
-    const c = S.cycles[index];
+  const frames = activeFrames(), position = activeFramePosition(frames);
+  $('cycle-dots').innerHTML = frames.map((frame, i) => {
+    const c = S.cycles[frame.cycleIndex];
     const prov = providerFor(c.hazard_source);
     const short = prov.id === 'hrrr' ? 'HRRR' : prov.id === 'weathernext2' ? 'WN2' : 'Forecast';
-    const desc = `${short}: ${c.event_name || c.cycle_id} · starts +${c.lead_hours || 0}h`;
-    return `<i class="${index === S.idx ? 'active' : ''}" title="${esc(desc)}"></i>`;
+    const lead = frame.trackIndex != null ? S.track.points[frame.trackIndex].lead_hours : c.lead_hours;
+    const desc = `${short}: ${c.event_name || c.cycle_id} · lead +${lead || 0}h`;
+    return `<i class="${i === position ? 'active' : ''}" title="${esc(desc)}"></i>`;
   }).join('');
 }
 
+function activeFrames() {
+  const cycles = providerFrameIndices();
+  if (cycles.length === 1 && cycles[0] === S.idx && S.track
+      && Array.isArray(S.track.points) && S.track.points.length > 1) {
+    return S.track.points.map((point, trackIndex) => ({
+      cycleIndex: S.idx, trackIndex, lead_hours: point.lead_hours, valid_utc: point.valid_utc,
+    }));
+  }
+  return cycles.map((cycleIndex) => ({ cycleIndex, trackIndex: null }));
+}
+
+function activeFramePosition(frames = activeFrames()) {
+  const position = frames.findIndex((frame) => frame.cycleIndex === S.idx
+    && (frame.trackIndex == null || frame.trackIndex === S.trackFrame));
+  return Math.max(0, position);
+}
+
+async function selectFrame(frame) {
+  if (!frame) return;
+  if (frame.cycleIndex !== S.idx) {
+    await loadCycle(frame.cycleIndex, frame.trackIndex);
+    return;
+  }
+  S.trackFrame = frame.trackIndex;
+  updateFrameNavigation(); updateCycleChrome(); drawForecast(); drawMap();
+}
+
 function updateFrameNavigation() {
-  const frames = providerFrameIndices();
-  const position = Math.max(0, frames.indexOf(S.idx));
+  const frames = activeFrames();
+  const position = activeFramePosition(frames);
   $('cycle').max = String(Math.max(0, frames.length - 1));
   $('cycle').value = String(position);
   $('cycle-prev').disabled = position === 0;
@@ -205,7 +232,7 @@ function updateFrameNavigation() {
   buildCycleDots(); drawSourceSwitch();
 }
 
-async function loadCycle(index) {
+async function loadCycle(index, requestedTrackFrame = null) {
   const i = Math.max(0, Math.min(S.cycles.length - 1, index));
   const token = ++S.loadToken;
   const summary = S.cycles[i];
@@ -220,7 +247,12 @@ async function loadCycle(index) {
   S.idx = i; S.cycle = cycle; S.counties = counties; S.geo = geo;
   S.activeProvider = providerFor(summary.hazard_source).id;
   S.countiesGeoProjected = null;
-  S.track = track && track.available !== false ? track : null; S.curve = null;
+  S.track = track && track.available !== false ? track : null;
+  S.trackFrame = S.track ? Math.max(0, Math.min(
+    S.track.points.length - 1,
+    requestedTrackFrame == null ? Number(S.track.current_index || 0) : requestedTrackFrame,
+  )) : null;
+  S.curve = null;
   S.byFips = new Map(counties.map((row) => [String(row.county_fips), row]));
   updateFrameNavigation(); updateCycleChrome(); buildLayers();
   drawProvenance(); drawSplit(); drawPriority(); drawForecast(); drawSourceStack(); drawTail();
@@ -264,18 +296,37 @@ function formatCycleLead(cycle) {
   return lead != null ? `Starts +${lead}h${horizonText}` : horizonText.replace(/^ · /, '');
 }
 
+function formatValidInstant(value) {
+  const date = new Date(value);
+  if (Number.isNaN(+date)) return 'Valid time unavailable';
+  const day = date.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return `Valid ${day} ${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}Z`;
+}
+
 function updateCycleChrome() {
   const cycle = S.cycle, issued = new Date(cycle.issued_utc);
   const prov = providerFor(cycle.meta ? cycle.meta.hazard_source : cycle.hazard_source);
   const shortProv = prov.id === 'hrrr' ? 'NOAA HRRR' : prov.id === 'weathernext2' ? 'WeatherNext 2' : 'Forecast';
-  const frames = providerFrameIndices(prov.id), position = Math.max(0, frames.indexOf(S.idx));
+  const frames = activeFrames(), position = activeFramePosition(frames);
+  const frame = frames[position], trackPoint = frame && frame.trackIndex != null && S.track
+    ? S.track.points[frame.trackIndex] : null;
+  const inputCount = Array.isArray(cycle.input_lead_hours) ? cycle.input_lead_hours.length
+    : Array.isArray(cycle.meta && cycle.meta.input_lead_hours) ? cycle.meta.input_lead_hours.length : 0;
   $('event-name').textContent = cycle.event_name || cycle.event_id;
   $('overview-provider').textContent = `${shortProv} · ${providerCoverage(prov.id)}`;
-  $('cycle-time').textContent = formatValidRange(cycle);
+  $('cycle-time').textContent = trackPoint ? formatValidInstant(trackPoint.valid_utc) : formatValidRange(cycle);
   $('cycle-init').textContent = `Initialized ${formatCycleTime(cycle.issued_utc)}`;
-  $('cycle-counter').textContent = `${shortProv} · forecast ${position + 1} of ${frames.length}`;
+  $('cycle-counter').textContent = trackPoint
+    ? `${shortProv} · track lead ${position + 1} of ${frames.length}`
+    : `${shortProv} · map window ${position + 1} of ${frames.length}`;
   const leadEl = $('cycle-lead');
-  leadEl.textContent = formatCycleLead(cycle);
+  leadEl.textContent = trackPoint
+    ? `Lead +${trackPoint.lead_hours}h · storm-center frame`
+    : `${formatCycleLead(cycle)} · aggregate of ${inputCount || 'unknown'} model leads`;
+  const note = $('frame-note');
+  if (note) note.textContent = trackPoint
+    ? `Playback moves through ${frames.length} available track points. The county wind/risk layer remains the +${cycle.forecast_horizon_hours || 18}h aggregate.`
+    : `This product exports ${inputCount || 'unknown'} input leads as one aggregate map; individual lead maps are not present in the JSON.`;
   if (cycle.meta && cycle.meta.valid_start_utc && cycle.meta.valid_end_utc) {
     leadEl.title = `Forecast valid from ${cycle.meta.valid_start_utc} to ${cycle.meta.valid_end_utc}`;
     $('cycle-time').title = `Forecast valid from ${cycle.meta.valid_start_utc} to ${cycle.meta.valid_end_utc}`;
@@ -284,7 +335,7 @@ function updateCycleChrome() {
   const freshness = cycle.degraded_mode ? 'degraded' : liveAgeHours != null && liveAgeHours > 12 ? 'stale' : cycle.freshness;
   $('freshness').textContent = freshness; $('freshness').className = `pill ${freshness}`;
   $('source-badge').textContent = `${cycle.meta.forecast_provider || 'unknown'} · ${S.counties.length} counties`;
-  [...$('cycle-dots').children].forEach((dot, i) => dot.classList.toggle('active', frames[i] === S.idx));
+  [...$('cycle-dots').children].forEach((dot, i) => dot.classList.toggle('active', i === position));
   document.querySelectorAll('[data-overlay="track"],[data-overlay="wind"],[data-view="storm"]').forEach((button) => {
     button.disabled = !S.track;
     button.title = S.track ? ''
@@ -297,21 +348,21 @@ function updateCycleChrome() {
 }
 
 function stepCycle(delta) {
-  const frames = providerFrameIndices(), position = frames.indexOf(S.idx);
+  const frames = activeFrames(), position = activeFramePosition(frames);
   const target = Math.max(0, Math.min(frames.length - 1, position + delta));
-  if (frames[target] != null) loadCycle(frames[target]);
+  if (frames[target]) selectFrame(frames[target]);
 }
 function togglePlayback() { S.playing ? stopPlayback() : startPlayback(); }
 function startPlayback() {
-  const frames = providerFrameIndices();
+  const frames = activeFrames();
   if (frames.length < 2) return;
-  let position = frames.indexOf(S.idx);
-  if (position >= frames.length - 1) { position = 0; loadCycle(frames[0]); }
+  let position = activeFramePosition(frames);
+  if (position >= frames.length - 1) { position = 0; selectFrame(frames[0]); }
   S.playing = true; updatePlayButton();
   S.timer = setInterval(async () => {
-    const activeFrames = providerFrameIndices(), activePosition = activeFrames.indexOf(S.idx);
-    if (activePosition >= activeFrames.length - 1) { stopPlayback(); return; }
-    await loadCycle(activeFrames[activePosition + 1]);
+    const framesNow = activeFrames(), activePosition = activeFramePosition(framesNow);
+    if (activePosition >= framesNow.length - 1) { stopPlayback(); return; }
+    await selectFrame(framesNow[activePosition + 1]);
   }, +$('playback-speed').value);
 }
 function stopPlayback() { clearInterval(S.timer); S.timer = null; S.playing = false; updatePlayButton(); }
@@ -417,7 +468,10 @@ function stormCategory(vmaxKt) {
 }
 function stormMeta() {
   if (!S.track || !Array.isArray(S.track.points) || !S.track.points.length) return null;
-  const currentIndex = Math.max(0, Math.min(S.track.points.length - 1, S.track.current_index || 0));
+  const currentIndex = Math.max(0, Math.min(
+    S.track.points.length - 1,
+    S.trackFrame == null ? Number(S.track.current_index || 0) : S.trackFrame,
+  ));
   const current = S.track.points[currentIndex];
   const coneByLead = S.track.cone_radius_nm_by_lead || {};
   const points = S.track.points.map((point, i) => {
@@ -429,7 +483,7 @@ function stormMeta() {
       lat: point.lat, lon: point.lon, lead_hours: lead,
       valid_time_utc: point.valid_utc, max_wind_ms: point.vmax_kt * .514444,
       pressure_hpa: point.pmin_mb, uncertainty_km: coneNm * 1.852,
-      raw: point,
+      raw: point, selected: i === currentIndex,
     };
   });
   const classification = S.track.classification || current.stage || '';
@@ -594,8 +648,9 @@ const WIND_TIER_STYLE = {
 
 function drawStormOverlay(track, storm, screen, scale) {
   const points = track.map((point) => ({ ...point, xy: screen(point.lon, point.lat) }));
-  const past = points.filter((point) => point.lead_hours <= 0);
-  const future = points.filter((point) => point.lead_hours >= 0);
+  const selectedIndex = Math.max(0, points.findIndex((point) => point.selected));
+  const past = points.slice(0, selectedIndex + 1);
+  const future = points.slice(selectedIndex);
   let out = '';
   if (S.overlays.track && future.length > 1) {
     const left = [], right = [];
@@ -612,7 +667,7 @@ function drawStormOverlay(track, storm, screen, scale) {
     if (past.length > 1) out += `<path class="storm-track-past" d="${past.map((p, i) => `${i ? 'L' : 'M'}${p.xy[0].toFixed(1)} ${p.xy[1].toFixed(1)}`).join('')}"/>`;
     out += `<path class="storm-track" d="${future.map((p, i) => `${i ? 'L' : 'M'}${p.xy[0].toFixed(1)} ${p.xy[1].toFixed(1)}`).join('')}"/>`;
   }
-  const current = points.find((p) => p.lead_hours === 0) || points[0];
+  const current = points[selectedIndex] || points[0];
   if (S.overlays.wind && current) {
     const radii = storm.wind_radii_km || {};
     // Largest radius (34kt) drawn first, smallest (64kt) last, so each
@@ -629,11 +684,10 @@ function drawStormOverlay(track, storm, screen, scale) {
     });
   }
   if (S.overlays.track) points.forEach((point, i) => {
-    const isCurrent = point.lead_hours === 0;
-    if (!isCurrent && point.lead_hours > 0 && point.lead_hours % 12 !== 0 && i !== points.length - 1) return;
-    const label = isCurrent ? 'NOW' : point.lead_hours > 0
+    const isCurrent = point.selected;
+    const label = isCurrent ? `+${point.lead_hours}h` : point.lead_hours >= 0
       ? `+${point.lead_hours}h` : `${Math.abs(point.lead_hours)}h ago`;
-    const isPast = point.lead_hours < 0;
+    const isPast = i < selectedIndex;
     const tier = stormTier(point.raw && point.raw.vmax_kt != null ? point.raw.vmax_kt : null, storm.isCyclone);
     const tooltip = `${esc(label)} · ${esc(tier.label)} · ${fmt(point.max_wind_ms, 'ms')} · ${point.pressure_hpa || '—'} hPa`;
     if (isCurrent) {
@@ -641,7 +695,7 @@ function drawStormOverlay(track, storm, screen, scale) {
       // next forecast point, so the storm's motion is visible without
       // reading the track line's slope - screen-space delta, not
       // geographic bearing, so it always agrees with the drawn track.
-      const next = future[1];
+      const next = points[i + 1];
       if (next) {
         const dx = next.xy[0] - point.xy[0], dy = next.xy[1] - point.xy[1];
         const heading = Math.atan2(dx, -dy) * 180 / Math.PI, tip = 15, base = 6;
@@ -820,14 +874,18 @@ function drawForecast() {
     $('storm-stats').innerHTML =
       `<div><b>${peak ? `${peak.toFixed(0)} m/s` : '—'}</b><span>${esc(windLabel(false))}</span></div>` +
       `<div><b>${integer.format(galeCount)}</b><span>Counties ≥ 34 kt</span></div>`;
-    $('storm-chip').hidden = true; return;
+    const chip = $('storm-chip'); chip.hidden = false;
+    chip.innerHTML = '<b>No storm track in this JSON</b><span>Showing the exported county wind field only; no ocean cyclone center or wind radii were supplied.</span>';
+    return;
   }
   $('storm-symbol').className = `storm-symbol${storm.isCyclone ? '' : ' low'}`;
   $('storm-class').textContent = `${storm.classification || 'Tropical cyclone'}${storm.category != null ? ` · Category ${storm.category}` : ''}`;
   $('storm-name').textContent = `${S.track.name || S.cycle.event_name} · ${S.track.storm_id || 'track supplied'}`;
-  $('storm-stats').innerHTML = `<div><b>${Number(storm.center_lat).toFixed(1)}°, ${Math.abs(storm.center_lon).toFixed(1)}°W</b><span>Current center</span></div><div><b>${storm.max_wind_kt || '—'} kt</b><span>Maximum wind</span></div><div><b>${storm.min_pressure_hpa || '—'} hPa</b><span>Minimum pressure</span></div><div><b>+${Math.max(...storm.track.map((point) => point.lead_hours))} h</b><span>Track horizon</span></div>`;
+  $('storm-stats').innerHTML = `<div><b>${Number(storm.center_lat).toFixed(1)}°, ${Math.abs(storm.center_lon).toFixed(1)}°W</b><span>Selected center</span></div><div><b>${storm.max_wind_kt || '—'} kt</b><span>Maximum wind</span></div><div><b>${storm.min_pressure_hpa || '—'} hPa</b><span>Minimum pressure</span></div><div><b>+${Math.max(...storm.track.map((point) => point.lead_hours))} h</b><span>Track horizon</span></div>`;
   const chip = $('storm-chip'); chip.hidden = false;
-  chip.innerHTML = `<b>${esc(storm.classification || 'Cyclone')}${storm.category ? ` · Cat ${storm.category}` : ''} · ${esc(provider)}</b><span>${storm.max_wind_kt || '—'} kt · ${storm.min_pressure_hpa || '—'} hPa · cone shows center uncertainty</span>`;
+  chip.innerHTML = storm.isCyclone
+    ? `<b>${esc(storm.classification || 'Cyclone')}${storm.category ? ` · Cat ${storm.category}` : ''} · ${esc(provider)}</b><span>Selected +${S.track.points[storm.currentIndex].lead_hours}h · ${storm.max_wind_kt || '—'} kt · ${storm.min_pressure_hpa || '—'} hPa</span>`
+    : `<b>No ocean cyclone in this JSON</b><span>Experimental inland HRRR surface low · selected +${S.track.points[storm.currentIndex].lead_hours}h · zero supplied tropical wind radii.</span>`;
 }
 
 function drawTail() {

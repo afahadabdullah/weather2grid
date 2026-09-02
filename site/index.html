@@ -73,6 +73,8 @@
           <button type="button" id="zoom-reset" aria-label="Reset extent">⤢</button>
         </div>
         <div class="legend" id="legend"></div>
+        <div class="maphint">Click a county for its distribution · scroll to zoom · drag to pan</div>
+      </div>
         <section class="map-playback" aria-label="Forecast playback controls">
           <div class="source-switch" id="source-switch" role="tablist" aria-label="Forecast data source"></div>
           <div class="playback-summary">
@@ -91,13 +93,11 @@
             </div>
           </div>
           <div class="cycle-meta">
-            <span id="cycle-lead">—</span><span class="pill" id="freshness">—</span>
+            <span id="cycle-lead">—</span><span id="frame-note" class="frame-note">—</span><span class="pill" id="freshness">—</span>
             <label class="speed-label" for="playback-speed">Speed</label>
             <select id="playback-speed" aria-label="Playback speed"><option value="1400">1×</option><option value="800" selected>2×</option><option value="450">3×</option></select>
           </div>
         </section>
-        <div class="maphint">Click a county for its distribution · scroll to zoom · drag to pan</div>
-      </div>
     </article>
 
     <section class="left-analysis-grid" aria-label="Risk analysis">

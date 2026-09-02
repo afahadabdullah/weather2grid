@@ -120,7 +120,7 @@ def test_failed_export_preserves_previous_snapshot(tmp_path: Path) -> None:
     assert not list(tmp_path.glob(".site-data.tmp-*"))
 
 
-def test_export_archive_merge_preserves_existing_cycles(tmp_path: Path) -> None:
+def test_export_archive_merge_discards_older_initialization(tmp_path: Path) -> None:
     # First export cycle 1
     archive1 = tmp_path / "archive1"
     cycle1 = archive1 / "20260101T0000Z"
@@ -170,10 +170,10 @@ def test_export_archive_merge_preserves_existing_cycles(tmp_path: Path) -> None:
 
     summaries = export_archive(archive2, output, merge=True)
 
-    assert len(summaries) == 2
-    assert [s["cycle_id"] for s in summaries] == ["20260101T0600Z", "20260101T0000Z"]
+    assert len(summaries) == 1
+    assert [s["cycle_id"] for s in summaries] == ["20260101T0600Z"]
     status = json.loads((output / "status.json").read_text())
-    assert status["cycles"] == 2
+    assert status["cycles"] == 1
     assert status["latest"]["cycle_id"] == "20260101T0600Z"
-    assert (output / "cycles" / "20260101T0000Z" / "counties.json").exists()
+    assert not (output / "cycles" / "20260101T0000Z").exists()
     assert (output / "cycles" / "20260101T0600Z" / "counties.json").exists()
