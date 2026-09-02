@@ -58,10 +58,10 @@ function windLabel(short) {
 function layerLabel(layer) { return layer.key === 'peak_gust_ms' ? windLabel(true) : layer.label; }
 
 const RAMPS = {
-  impact: ['#183344', '#73584f', '#dc6f48', '#ffd18b'],
-  prob: ['#172e43', '#3d4d91', '#8a69d6', '#e3c6ff'],
-  gust: ['#153343', '#176f89', '#43c7cf', '#e0fbef'],
-  uncertainty: ['#1a2c40', '#364f8c', '#887ade', '#f0cfff'],
+  impact: ['#0f2231', '#184f68', '#df6c3a', '#fba72c', '#ffe9a0'],
+  prob: ['#0f2334', '#2c4b8e', '#7952c4', '#c968e0', '#f3d9ff'],
+  gust: ['#0d2230', '#155d78', '#22a2aa', '#5ce6c4', '#f0fdf7'],
+  uncertainty: ['#0f2232', '#2f497a', '#7462bd', '#bb86e0', '#f5dbff'],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -321,9 +321,14 @@ function applyViewport() {
 }
 function activeLayer() { return LAYERS.find((layer) => layer.key === S.layer) || LAYERS[0]; }
 function layerDomain(layer) {
-  if (layer.fixed) return layer.fixed;
   const values = S.counties.map((row) => row[layer.key]).filter((v) => v != null && !Number.isNaN(v));
-  return values.length ? [0, Math.max(...values) || 1] : [0, 1];
+  const maxVal = values.length ? Math.max(...values) : 1;
+  if (layer.key === 'expected_outage_fraction') {
+    const cap = Math.min(0.35, Math.max(0.10, Math.ceil(maxVal * 20) / 20));
+    return [0, cap];
+  }
+  if (layer.fixed) return layer.fixed;
+  return values.length ? [0, maxVal || 1] : [0, 1];
 }
 
 function stormCategory(vmaxKt) {
@@ -414,33 +419,14 @@ function drawMap() {
   const ox = pad + ((W - pad * 2) - (x1 - x0) * scale) / 2, oy = pad + ((H - pad * 2) - (y1 - y0) * scale) / 2;
   const screen = (lon, lat) => { const [x, y] = proj(lon, lat); return [ox + (x - x0) * scale, oy + (y - y0) * scale]; };
   const layer = activeLayer(), [lo, hi] = layerDomain(layer), stops = RAMPS[layer.ramp];
-  // The hatch <path> lives inside the <g> that applies `scale` to go from
-  // the Albers plane (the whole CONUS spans well under 1 unit there) to
-  // screen pixels, and patternUnits="userSpaceOnUse" resolves against that
-  // SAME pre-scale coordinate system - so a literal "5" tile is 5 raw
-  // Albers-plane units, not 5 screen pixels. At the real CONUS scale
-  // (~1100x) that is a several-thousand-pixel tile: the whole visible map
-  // shows only a sliver of one oversized diagonal stroke, which is the hard
-  // "shaded" wedge seen in production. Divide by `scale` so the tile is a
-  // constant ~6 screen pixels regardless of projection scale, matching what
-  // the "5"/"1" literals actually intended.
   const hatchTile = 6 / scale;
-  // Lighter than before (opacity .45 -> .22): now that this overlay is
-  // opt-in rather than on by default, when someone does turn it on for a
-  // cycle where it covers most counties it should still read as a subtle
-  // texture, not a second layer competing with the risk-color fill.
   let out = `<defs><pattern id="hatch" width="${hatchTile}" height="${hatchTile}" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="${hatchTile}" stroke="#d9edf1" stroke-width="${hatchTile / 5}" opacity=".22"/></pattern></defs>`;
   out += `<g class="map-viewport" transform="translate(${S.panX} ${S.panY}) scale(${S.zoom})">`;
-  if (S.overlays.states && statesGeo.paths.length) {
-    out += `<g class="state-layer" transform="translate(${ox} ${oy}) scale(${scale}) translate(${-x0} ${-y0})">`;
-    statesGeo.paths.forEach((path) => { out += `<path class="state-shape" d="${path.d}" vector-effect="non-scaling-stroke"><title>${esc(path.id)}</title></path>`; });
-    out += '</g>';
-  }
   out += `<g transform="translate(${ox} ${oy}) scale(${scale}) translate(${-x0} ${-y0})">`;
   const hatchParts = [];
   for (const path of countiesGeo.paths) {
     const row = S.byFips.get(path.id), value = row ? row[layer.key] : null;
-    const fill = value == null ? '#12232f' : rampColor(stops, (value - lo) / ((hi - lo) || 1));
+    const fill = value == null ? '#0f2231' : rampColor(stops, (value - lo) / ((hi - lo) || 1));
     const classes = ['county'];
     if (S.triggered.has(path.id)) classes.push('trig');
     if (S.selected === path.id) classes.push('sel');
@@ -448,11 +434,6 @@ function drawMap() {
     out += `<path class="${classes.join(' ')}" d="${path.d}" fill="${fill}" vector-effect="non-scaling-stroke" data-fips="${esc(path.id)}" tabindex="0"><title>${esc(title)}</title></path>`;
     if (S.overlays.extrapolation && row && row.training_envelope_flag !== 'inside') hatchParts.push(path.d);
   }
-  // One combined path for every hatched county instead of one <path> each -
-  // with real CONUS coverage the vast majority of counties sit outside a
-  // synthetic-trained envelope, so this was routinely thousands of extra
-  // stacked elements the browser had to lay out and paint on every redraw.
-  // evenodd, not the SVG default nonzero: Census cartographic-boundary rings
   // don't consistently follow a single winding direction, so combining
   // ~2856 disjoint county subpaths into one <path> can, in principle, let
   // mismatched winding between neighboring counties overlap incorrectly
@@ -464,6 +445,11 @@ function drawMap() {
   // a combined multi-ring path regardless, and costs nothing here.
   if (hatchParts.length) out += `<path d="${hatchParts.join(' ')}" fill="url(#hatch)" fill-rule="evenodd" pointer-events="none" stroke="none"/>`;
   out += '</g>';
+  if (S.overlays.states && statesGeo.paths.length) {
+    out += `<g class="state-layer" transform="translate(${ox} ${oy}) scale(${scale}) translate(${-x0} ${-y0})">`;
+    statesGeo.paths.forEach((path) => { out += `<path class="state-shape" d="${path.d}" vector-effect="non-scaling-stroke"><title>${esc(path.id)}</title></path>`; });
+    out += '</g>';
+  }
   if (track.length) out += drawStormOverlay(track, storm, screen, scale);
   out += '</g>';
   svg.innerHTML = out;
