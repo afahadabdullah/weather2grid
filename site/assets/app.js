@@ -726,14 +726,23 @@ function projectMapGeometry() {
   const officialStorms = (S.nhcTracks || []).map((item) => stormMeta(item, null)).filter(Boolean)
     .filter((item) => !storm || item.stormId !== storm.stormId);
   const visibleStorms = [...(storm ? [storm] : []), ...officialStorms];
-  const visibleTracks = visibleStorms.flatMap((item) => item.track || []);
+
+  // Restrict storm bounding to CONUS operational theater (Lon: -128°W to -64°W, Lat: 16°N to 54°N)
+  // Prevents far-away open Pacific (Hawaii) or deep Atlantic storms from shifting CONUS to the side!
+  const isNearConus = (pt) => pt && pt.lon >= -128 && pt.lon <= -64 && pt.lat >= 16 && pt.lat <= 54;
+  const conusStorms = visibleStorms.map((st) => {
+    const nearPts = (st.track || []).filter(isNearConus);
+    return nearPts.length ? { ...st, track: nearPts } : null;
+  }).filter(Boolean);
+  const conusTracks = conusStorms.flatMap((st) => st.track || []);
 
   let b = [...countyBounds];
   if (S.view === 'conus' && rawStates.length) {
+    // CONUS view is rigidly locked to state boundaries: NEVER shifts
     b = [...stateBounds];
-  } else if (S.view === 'storm' && visibleTracks.length) {
+  } else if (S.view === 'storm' && conusTracks.length) {
     b = [Infinity, Infinity, -Infinity, -Infinity];
-    visibleStorms.forEach((item) => {
+    conusStorms.forEach((item) => {
       (item.track || []).forEach((pt) => {
         const [px, py] = proj(pt.lon, pt.lat);
         const windKm = Math.max(pt.uncertainty_km || 0, (item.wind_radii_km && item.wind_radii_km['34kt']) || 150);
@@ -742,13 +751,18 @@ function projectMapGeometry() {
         b[2] = Math.max(b[2], px + r); b[3] = Math.max(b[3], py + r);
       });
     });
-  } else if (S.view === 'event' && S.overlays.track && visibleTracks.length) {
-    visibleTracks.forEach((pt) => {
-      const [px, py] = proj(pt.lon, pt.lat);
-      const r = Math.max(0, pt.uncertainty_km || 0) / 6371;
-      b[0] = Math.min(b[0], px - r); b[1] = Math.min(b[1], py - r);
-      b[2] = Math.max(b[2], px + r); b[3] = Math.max(b[3], py + r);
-    });
+  } else if (S.view === 'event') {
+    // Event view is anchored to the county footprint
+    b = [...countyBounds];
+    if (storm && storm.track && S.overlays.track) {
+      const nearPts = storm.track.filter(isNearConus);
+      nearPts.forEach((pt) => {
+        const [px, py] = proj(pt.lon, pt.lat);
+        const r = Math.max(0, pt.uncertainty_km || 0) / 6371;
+        b[0] = Math.min(b[0], px - r); b[1] = Math.min(b[1], py - r);
+        b[2] = Math.max(b[2], px + r); b[3] = Math.max(b[3], py + r);
+      });
+    }
   }
 
   let [x0, y0, x1, y1] = b;
@@ -969,7 +983,9 @@ function drawStormCanvas(ctx, zoom) {
   if (!visibleStorms.length || !S.mapScreen) return;
 
   for (const st of visibleStorms) {
-    const points = st.track.map((pt) => ({ ...pt, xy: S.mapScreen(pt.lon, pt.lat) }));
+    const validPts = (st.track || []).filter((pt) => pt && pt.lon >= -132 && pt.lon <= -60 && pt.lat >= 14 && pt.lat <= 55);
+    if (!validPts.length) continue;
+    const points = validPts.map((pt) => ({ ...pt, xy: S.mapScreen(pt.lon, pt.lat) }));
     const currentIdx = Math.max(0, points.findIndex((pt) => pt.selected));
     const current = points[currentIdx] || points[0];
 
