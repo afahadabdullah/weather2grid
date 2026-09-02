@@ -58,6 +58,20 @@ def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
     issued = str(meta.get("forecast_init_time_utc", ""))
     age = age_hours(issued, now)
     freshness = "degraded" if meta.get("degraded_mode") else "unknown" if age is None else "stale" if age > 12 else "current"
+    valid_start = meta.get("valid_start_utc")
+    valid_end = meta.get("valid_end_utc")
+    window_hours = None
+    horizon_hours = None
+    try:
+        start = pd.Timestamp(valid_start)
+        end = pd.Timestamp(valid_end)
+        init = pd.Timestamp(issued)
+        if not (pd.isna(start) or pd.isna(end)):
+            window_hours = round((end - start).total_seconds() / 3600, 2)
+        if not (pd.isna(init) or pd.isna(end)):
+            horizon_hours = round((end - init).total_seconds() / 3600, 2)
+    except (TypeError, ValueError):
+        pass
     return {
         "cycle_id": str(meta["cycle_id"]),
         "event_id": str(meta.get("event_id", "unknown")),
@@ -72,6 +86,11 @@ def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
         "provider_status": meta.get("provider_status", "unknown"),
         "model_artifact_id": meta.get("model_artifact_id"),
         "hazard_source": meta.get("hazard_source"),
+        "forecast_provider": meta.get("forecast_provider"),
+        "valid_start_utc": valid_start,
+        "valid_end_utc": valid_end,
+        "forecast_window_hours": window_hours,
+        "forecast_horizon_hours": horizon_hours,
         "training_data_cutoff_utc": meta.get("training_data_cutoff_utc"),
     }
 
@@ -139,7 +158,6 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
             "optional_absent": [],
             "cdf_quantiles": sorted(column for column in frame if column.startswith("q") and column.endswith("_outage_fraction")),
         }
-        write_json(target / "cycle.json", {**summary, "fields": fields, "meta": meta})
         write_json(target / "counties.json", records(frame))
 
         geometry = source / "counties.geojson"
@@ -151,9 +169,19 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
         if not track.exists():
             track = archive / "track.json"
         if track.exists():
+            try:
+                track_data = json.loads(track.read_text(encoding="utf-8"))
+                summary["track_available"] = bool(
+                    track_data.get("available", True) is not False
+                    and track_data.get("points")
+                )
+            except (OSError, json.JSONDecodeError):
+                summary["track_available"] = False
             shutil.copyfile(track, target / "track.json")
         else:
+            summary["track_available"] = False
             write_json(target / "track.json", {"available": False, "reason": "no track in this product"})
+        write_json(target / "cycle.json", {**summary, "fields": fields, "meta": meta})
 
     if merge and (output / "cycles").exists():
         for existing_dir in sorted((output / "cycles").iterdir()):
@@ -166,6 +194,18 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
                 existing_cycle_data = json.loads(meta_file.read_text(encoding="utf-8"))
                 meta = existing_cycle_data.get("meta", existing_cycle_data)
                 summary = cycle_summary(meta, now)
+                track_file = dest_dir / "track.json"
+                if track_file.exists():
+                    try:
+                        track_data = json.loads(track_file.read_text(encoding="utf-8"))
+                        summary["track_available"] = bool(
+                            track_data.get("available", True) is not False
+                            and track_data.get("points")
+                        )
+                    except (OSError, json.JSONDecodeError):
+                        summary["track_available"] = False
+                else:
+                    summary["track_available"] = False
                 existing_cycle_data.update(summary)
                 write_json(meta_file, existing_cycle_data)
                 summaries.append(summary)

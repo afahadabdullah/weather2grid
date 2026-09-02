@@ -4,9 +4,10 @@
 const S = {
   cycles: [], idx: 0, cycle: null, counties: [], geo: null,
   basemap: null, track: null,
-  byFips: new Map(), layer: 'expected_customers_out', ratio: 0.15,
+  byFips: new Map(), layer: 'peak_gust_ms', ratio: 0.15,
   triggered: new Set(), selected: null, playing: false, timer: null,
   loadToken: 0, curve: null,
+  activeProvider: null,
   // extrapolation defaults OFF: with real HRRR cycles, the vast majority of
   // counties sit outside the model's synthetic training envelope (a data
   // fact, not a bug), so leaving this on by default hatches almost the whole
@@ -44,6 +45,38 @@ function providerFor(hazardSource) {
   // An unrecognised source is still shown, under its own raw name, rather
   // than being silently dropped out of the stack.
   return { id: `other:${source}`, label: source || 'unknown source', match: () => false };
+}
+
+function frameStartMs(cycle) {
+  const valid = cycle.valid_start_utc || (cycle.meta && cycle.meta.valid_start_utc);
+  if (valid) return Date.parse(valid) || 0;
+  const issued = Date.parse(cycle.issued_utc || cycle.forecast_init_time_utc) || 0;
+  return issued + Number(cycle.lead_hours || 0) * 36e5;
+}
+
+function providerFrameIndices(providerId = S.activeProvider) {
+  return S.cycles.map((cycle, index) => ({ cycle, index }))
+    .filter(({ cycle }) => providerFor(cycle.hazard_source).id === providerId)
+    .sort((a, b) => frameStartMs(a.cycle) - frameStartMs(b.cycle))
+    .map(({ index }) => index);
+}
+
+function providerCoverage(providerId) {
+  const frames = providerFrameIndices(providerId).map((index) => S.cycles[index]);
+  if (!frames.length) return 'not in archive';
+  const inits = new Set(frames.map((cycle) => cycle.issued_utc));
+  const spans = frames.map((cycle) => {
+    const start = Date.parse(cycle.valid_start_utc), end = Date.parse(cycle.valid_end_utc);
+    return start && end ? Math.round((end - start) / 36e5) : null;
+  }).filter((value) => value != null);
+  if (providerId === 'weathernext2') {
+    const init = Math.min(...frames.map((cycle) => Date.parse(cycle.issued_utc) || Infinity));
+    const end = Math.max(...frames.map((cycle) => Date.parse(cycle.valid_end_utc) || frameStartMs(cycle)));
+    const horizon = Number.isFinite(init) ? Math.round((end - init) / 36e5) : null;
+    return `${frames.length} forecast windows${horizon ? ` · through +${horizon}h` : ''}`;
+  }
+  const span = spans.length && spans.every((value) => value === spans[0]) ? ` · ${spans[0]}h each` : '';
+  return `${inits.size} model run${inits.size === 1 ? '' : 's'}${span}`;
 }
 
 // WeatherNext 2 publishes 100 m sustained wind, which the adapter carries in
@@ -110,11 +143,19 @@ async function boot() {
   showBanner(status.banner);
   [S.cycles, S.basemap] = await Promise.all([j('data/cycles.json'), j('data/basemap.geojson')]);
   if (!S.cycles.length) { $('event-name').textContent = 'No forecast products found'; return; }
-  S.cycles.reverse();
+  S.cycles.sort((a, b) => frameStartMs(a) - frameStartMs(b));
+  const initialIndex = S.cycles.reduce((best, cycle, index) => {
+    const issued = Date.parse(cycle.issued_utc) || 0;
+    const bestIssued = Date.parse(S.cycles[best].issued_utc) || 0;
+    return issued > bestIssued || (issued === bestIssued && Number(cycle.lead_hours || 0) < Number(S.cycles[best].lead_hours || 0)) ? index : best;
+  }, 0);
+  S.activeProvider = providerFor(S.cycles[initialIndex].hazard_source).id;
   const slider = $('cycle');
-  slider.max = String(S.cycles.length - 1);
-  slider.value = String(S.cycles.length - 1);
-  slider.addEventListener('input', () => { stopPlayback(); loadCycle(+slider.value); });
+  slider.addEventListener('input', () => {
+    stopPlayback();
+    const frames = providerFrameIndices();
+    if (frames[+slider.value] != null) loadCycle(frames[+slider.value]);
+  });
   $('cycle-prev').addEventListener('click', () => { stopPlayback(); stepCycle(-1); });
   $('cycle-next').addEventListener('click', () => { stopPlayback(); stepCycle(1); });
   $('cycle-play').addEventListener('click', togglePlayback);
@@ -126,8 +167,8 @@ async function boot() {
     }
     if (event.key === 'Escape') closeDrawer();
   });
-  buildLayers(); wireRatio(); wireOverlays(); wireMapControls(); buildCycleDots();
-  await loadCycle(S.cycles.length - 1);
+  buildLayers(); wireRatio(); wireOverlays(); wireMapControls();
+  await loadCycle(initialIndex);
   let resizeTimer;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
@@ -144,12 +185,24 @@ function showBanner(banner) {
 }
 
 function buildCycleDots() {
-  $('cycle-dots').innerHTML = S.cycles.map((c, i) => {
+  const frames = providerFrameIndices();
+  $('cycle-dots').innerHTML = frames.map((index) => {
+    const c = S.cycles[index];
     const prov = providerFor(c.hazard_source);
-    const short = prov.id === 'hrrr' ? 'HRRR' : prov.id === 'weathernext2' ? 'WN2' : 'Cycle';
-    const desc = `${short}: ${c.event_name || c.cycle_id} (Lead +${c.lead_hours || 0}h)`;
-    return `<i class="${i === S.idx ? 'active' : ''}" title="${esc(desc)}"></i>`;
+    const short = prov.id === 'hrrr' ? 'HRRR' : prov.id === 'weathernext2' ? 'WN2' : 'Forecast';
+    const desc = `${short}: ${c.event_name || c.cycle_id} · starts +${c.lead_hours || 0}h`;
+    return `<i class="${index === S.idx ? 'active' : ''}" title="${esc(desc)}"></i>`;
   }).join('');
+}
+
+function updateFrameNavigation() {
+  const frames = providerFrameIndices();
+  const position = Math.max(0, frames.indexOf(S.idx));
+  $('cycle').max = String(Math.max(0, frames.length - 1));
+  $('cycle').value = String(position);
+  $('cycle-prev').disabled = position === 0;
+  $('cycle-next').disabled = position >= frames.length - 1;
+  buildCycleDots(); drawSourceSwitch();
 }
 
 async function loadCycle(index) {
@@ -165,11 +218,11 @@ async function loadCycle(index) {
   ]);
   if (token !== S.loadToken) return;
   S.idx = i; S.cycle = cycle; S.counties = counties; S.geo = geo;
+  S.activeProvider = providerFor(summary.hazard_source).id;
   S.countiesGeoProjected = null;
   S.track = track && track.available !== false ? track : null; S.curve = null;
   S.byFips = new Map(counties.map((row) => [String(row.county_fips), row]));
-  $('cycle').value = String(i);
-  updateCycleChrome(); buildLayers();
+  updateFrameNavigation(); updateCycleChrome(); buildLayers();
   drawProvenance(); drawSplit(); drawPriority(); drawForecast(); drawSourceStack(); drawTail();
   await refreshTriggered();
   if (token !== S.loadToken) return;
@@ -189,6 +242,15 @@ function formatCycleTime(issuedStr) {
   return `${utcDate} (${localTime})`;
 }
 
+function formatValidRange(cycle) {
+  const meta = cycle.meta || {};
+  const start = new Date(meta.valid_start_utc || new Date(new Date(cycle.issued_utc).getTime() + Number(cycle.lead_hours || 0) * 36e5));
+  const end = meta.valid_end_utc ? new Date(meta.valid_end_utc) : null;
+  if (Number.isNaN(+start)) return 'Valid time unavailable';
+  const stamp = (date) => `${date.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' })} ${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}Z`;
+  return end && !Number.isNaN(+end) ? `Valid ${stamp(start)}–${stamp(end)}` : `Valid ${stamp(start)}`;
+}
+
 function formatCycleLead(cycle) {
   const meta = cycle.meta || {};
   const lead = cycle.lead_hours;
@@ -199,27 +261,30 @@ function formatCycleLead(cycle) {
     const spanHrs = Math.round((end - start) / 36e5);
     if (spanHrs > 0) horizonText = ` · ${spanHrs}h window`;
   }
-  return lead != null ? `Lead +${lead}h${horizonText}` : '';
+  return lead != null ? `Starts +${lead}h${horizonText}` : horizonText.replace(/^ · /, '');
 }
 
 function updateCycleChrome() {
   const cycle = S.cycle, issued = new Date(cycle.issued_utc);
   const prov = providerFor(cycle.meta ? cycle.meta.hazard_source : cycle.hazard_source);
   const shortProv = prov.id === 'hrrr' ? 'NOAA HRRR' : prov.id === 'weathernext2' ? 'WeatherNext 2' : 'Forecast';
+  const frames = providerFrameIndices(prov.id), position = Math.max(0, frames.indexOf(S.idx));
   $('event-name').textContent = cycle.event_name || cycle.event_id;
-  $('cycle-time').textContent = formatCycleTime(cycle.issued_utc);
-  $('cycle-counter').textContent = `${shortProv} · ${S.idx + 1} of ${S.cycles.length}`;
+  $('overview-provider').textContent = `${shortProv} · ${providerCoverage(prov.id)}`;
+  $('cycle-time').textContent = formatValidRange(cycle);
+  $('cycle-init').textContent = `Initialized ${formatCycleTime(cycle.issued_utc)}`;
+  $('cycle-counter').textContent = `${shortProv} · forecast ${position + 1} of ${frames.length}`;
   const leadEl = $('cycle-lead');
   leadEl.textContent = formatCycleLead(cycle);
   if (cycle.meta && cycle.meta.valid_start_utc && cycle.meta.valid_end_utc) {
     leadEl.title = `Forecast valid from ${cycle.meta.valid_start_utc} to ${cycle.meta.valid_end_utc}`;
-    $('cycle-time').title = `Model initialization: ${cycle.issued_utc}`;
+    $('cycle-time').title = `Forecast valid from ${cycle.meta.valid_start_utc} to ${cycle.meta.valid_end_utc}`;
   }
   const liveAgeHours = Number.isNaN(+issued) ? null : (Date.now() - issued.getTime()) / 36e5;
   const freshness = cycle.degraded_mode ? 'degraded' : liveAgeHours != null && liveAgeHours > 12 ? 'stale' : cycle.freshness;
   $('freshness').textContent = freshness; $('freshness').className = `pill ${freshness}`;
   $('source-badge').textContent = `${cycle.meta.forecast_provider || 'unknown'} · ${S.counties.length} counties`;
-  [...$('cycle-dots').children].forEach((dot, i) => dot.classList.toggle('active', i === S.idx));
+  [...$('cycle-dots').children].forEach((dot, i) => dot.classList.toggle('active', frames[i] === S.idx));
   document.querySelectorAll('[data-overlay="track"],[data-overlay="wind"],[data-view="storm"]').forEach((button) => {
     button.disabled = !S.track;
     button.title = S.track ? ''
@@ -231,22 +296,29 @@ function updateCycleChrome() {
   });
 }
 
-function stepCycle(delta) { loadCycle(Math.max(0, Math.min(S.cycles.length - 1, S.idx + delta))); }
+function stepCycle(delta) {
+  const frames = providerFrameIndices(), position = frames.indexOf(S.idx);
+  const target = Math.max(0, Math.min(frames.length - 1, position + delta));
+  if (frames[target] != null) loadCycle(frames[target]);
+}
 function togglePlayback() { S.playing ? stopPlayback() : startPlayback(); }
 function startPlayback() {
-  if (S.cycles.length < 2) return;
-  if (S.idx >= S.cycles.length - 1) loadCycle(0);
+  const frames = providerFrameIndices();
+  if (frames.length < 2) return;
+  let position = frames.indexOf(S.idx);
+  if (position >= frames.length - 1) { position = 0; loadCycle(frames[0]); }
   S.playing = true; updatePlayButton();
   S.timer = setInterval(async () => {
-    if (S.idx >= S.cycles.length - 1) { stopPlayback(); return; }
-    await loadCycle(S.idx + 1);
+    const activeFrames = providerFrameIndices(), activePosition = activeFrames.indexOf(S.idx);
+    if (activePosition >= activeFrames.length - 1) { stopPlayback(); return; }
+    await loadCycle(activeFrames[activePosition + 1]);
   }, +$('playback-speed').value);
 }
 function stopPlayback() { clearInterval(S.timer); S.timer = null; S.playing = false; updatePlayButton(); }
 function updatePlayButton() {
   const button = $('cycle-play');
   button.setAttribute('aria-pressed', String(S.playing));
-  button.setAttribute('aria-label', S.playing ? 'Pause forecast cycles' : 'Play forecast cycles');
+  button.setAttribute('aria-label', S.playing ? 'Pause forecast frames' : 'Play forecast frames');
   button.querySelector('span').textContent = S.playing ? 'Ⅱ' : '▶';
   button.querySelector('b').textContent = S.playing ? 'Pause' : 'Play';
 }
@@ -360,9 +432,13 @@ function stormMeta() {
       raw: point,
     };
   });
+  const classification = S.track.classification || current.stage || '';
+  const isCyclone = /tropical|cyclone|hurricane|typhoon|depression/i.test(classification)
+    || /nhc|atcf/i.test(String(S.track.source || ''));
   return {
-    classification: S.track.classification || current.stage,
-    category: stormCategory(current.vmax_kt), center_lat: current.lat,
+    classification,
+    isCyclone,
+    category: isCyclone ? stormCategory(current.vmax_kt) : null, center_lat: current.lat,
     center_lon: current.lon, max_wind_ms: current.vmax_kt * .514444,
     max_wind_kt: current.vmax_kt, min_pressure_hpa: current.pmin_mb,
     wind_radii_km: { '34kt': current.r34_nm * 1.852, '50kt': current.r50_nm * 1.852, '64kt': current.r64_nm * 1.852 },
@@ -373,6 +449,7 @@ function stormMeta() {
 function drawMap() {
   const svg = $('map');
   if (!S.geo) return;
+  $('map-title').textContent = S.layer === 'peak_gust_ms' ? 'County wind field' : 'County outage risk';
   const W = svg.clientWidth || 900, H = svg.clientHeight || 560, proj = albers();
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   const projectCollection = (collection, key) => {
@@ -466,15 +543,20 @@ function drawMap() {
   });
   drawLegend(layer, lo, hi, stops); updateScaleBar();
   const states = [...new Set(S.counties.map((row) => row.state))].sort();
-  $('map-domain').textContent = `${S.view.toUpperCase()} extent · ${states.join(' + ')} footprint · ${S.counties.length} counties`;
+  const viewLabel = S.view === 'storm' ? 'Storm view' : S.view === 'conus' ? 'CONUS view' : 'Event view';
+  $('map-domain').textContent = `${viewLabel} · ${integer.format(S.counties.length)} counties`;
+  $('map-domain').title = `${states.join(' + ')} county footprint${track.length ? ' with supplied storm track' : ''}`;
 }
 
 // Intensity tier for one track point, keyed off its max sustained wind
 // (kt) - drives marker color/size everywhere in the storm overlay so a
 // glance at dot color or ring color tells you category, the same way an
 // NHC track map does, without needing to hover every point.
-function stormTier(vmaxKt) {
+function stormTier(vmaxKt, isCyclone = true) {
   if (vmaxKt == null) return { cat: null, color: '#8ba0ac', label: 'Unknown intensity' };
+  if (!isCyclone) return vmaxKt < 34
+    ? { cat: null, color: '#3fd4e5', label: 'Surface low' }
+    : { cat: null, color: '#ffb44c', label: 'Strong surface low' };
   if (vmaxKt < 34) return { cat: null, color: '#3fd4e5', label: 'Tropical depression' };
   if (vmaxKt < 64) return { cat: null, color: '#4fd1a1', label: 'Tropical storm' };
   const cat = stormCategory(vmaxKt);
@@ -482,20 +564,21 @@ function stormTier(vmaxKt) {
   return { cat, color, label: `Category ${cat}` };
 }
 
-// A compact three-bladed pinwheel (curved wedge x3, spun 120° apart) around
-// a dark "eye" - reads as a storm symbol at a glance instead of a plain
-// dot, and its color still carries the intensity tier like every other
-// marker here. cx/cy/r are in screen pixels; title is the hover tooltip.
+// A compact modern cyclone mark: three rounded spiral arms, a crisp eye,
+// and an intensity-colored perimeter. It remains legible over every risk
+// ramp without resembling the older filled pinwheel symbol.
 function stormGlyph(cx, cy, r, color, title) {
-  const blade = (rot) => {
-    const a0 = -34 * Math.PI / 180, a1 = 34 * Math.PI / 180, ro = r, ri = r * 0.32;
-    const pt = (a, rad) => [(rad * Math.cos(a)).toFixed(2), (rad * Math.sin(a)).toFixed(2)];
-    const [x0, y0] = pt(a0, ro), [x1, y1] = pt(a1, ro), [x2, y2] = pt(a1, ri), [x3, y3] = pt(a0, ri);
-    return `<path d="M${x0} ${y0} A${ro.toFixed(2)} ${ro.toFixed(2)} 0 0 1 ${x1} ${y1} L${x2} ${y2} A${ri.toFixed(2)} ${ri.toFixed(2)} 0 0 0 ${x3} ${y3} Z" fill="${color}" transform="rotate(${rot})"/>`;
-  };
+  const arm = `M0 0 C${(r * .12).toFixed(2)} ${(-r * .46).toFixed(2)} ${(r * .48).toFixed(2)} ${(-r * .78).toFixed(2)} ${(r * .94).toFixed(2)} ${(-r * .38).toFixed(2)}`;
   return `<g class="storm-glyph" transform="translate(${cx.toFixed(1)} ${cy.toFixed(1)})">` +
-    `<title>${title}</title>` + [0, 120, 240].map(blade).join('') +
-    `<circle r="${(r * 0.28).toFixed(2)}" fill="#071018" stroke="${color}" stroke-width="1.2"/></g>`;
+    `<title>${title}</title><circle class="storm-marker-bg" r="${(r * 1.12).toFixed(2)}" fill="#071018" stroke="${color}" stroke-width="1.5"/>` +
+    [0, 120, 240].map((rotation) => `<path d="${arm}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" transform="rotate(${rotation})"/>`).join('') +
+    `<circle r="${(r * .24).toFixed(2)}" fill="#f7feff" stroke="#071018" stroke-width="1.3"/></g>`;
+}
+
+function lowGlyph(cx, cy, r, color, title) {
+  return `<g class="low-glyph" transform="translate(${cx.toFixed(1)} ${cy.toFixed(1)})"><title>${title}</title>` +
+    `<circle r="${(r * 1.08).toFixed(2)}" fill="#071018" stroke="${color}" stroke-width="1.6"/>` +
+    `<text y="${(r * .43).toFixed(2)}" text-anchor="middle" fill="${color}" font-size="${(r * 1.35).toFixed(2)}" font-weight="800">L</text></g>`;
 }
 
 // Color/dash per wind-radius tier, plus the compass angle its on-map label
@@ -551,7 +634,7 @@ function drawStormOverlay(track, storm, screen, scale) {
     const label = isCurrent ? 'NOW' : point.lead_hours > 0
       ? `+${point.lead_hours}h` : `${Math.abs(point.lead_hours)}h ago`;
     const isPast = point.lead_hours < 0;
-    const tier = stormTier(point.raw && point.raw.vmax_kt != null ? point.raw.vmax_kt : null);
+    const tier = stormTier(point.raw && point.raw.vmax_kt != null ? point.raw.vmax_kt : null, storm.isCyclone);
     const tooltip = `${esc(label)} · ${esc(tier.label)} · ${fmt(point.max_wind_ms, 'ms')} · ${point.pressure_hpa || '—'} hPa`;
     if (isCurrent) {
       // A short heading arrow, pointed from the current fix toward the
@@ -565,7 +648,9 @@ function drawStormOverlay(track, storm, screen, scale) {
         out += `<g class="storm-heading" style="fill:${tier.color}" transform="translate(${point.xy[0].toFixed(1)} ${point.xy[1].toFixed(1)}) rotate(${heading.toFixed(1)})" pointer-events="none"><path d="M0 -${tip} L5 -${base} L-5 -${base} Z"/></g>`;
       }
       out += `<circle class="storm-halo" style="fill:${tier.color}" cx="${point.xy[0].toFixed(1)}" cy="${point.xy[1].toFixed(1)}" r="15" pointer-events="none"/>`;
-      out += stormGlyph(point.xy[0], point.xy[1], 10, tier.color, tooltip);
+      out += storm.isCyclone
+        ? stormGlyph(point.xy[0], point.xy[1], 10, tier.color, tooltip)
+        : lowGlyph(point.xy[0], point.xy[1], 10, tier.color, tooltip);
     } else {
       const r = isPast ? 3.2 : 3.6 + (tier.cat || 0) * 0.9;
       const fill = isPast ? '#64808f' : tier.color;
@@ -635,7 +720,42 @@ function drawKpis() {
   $('kpi-gust').textContent = gust ? `${gust.toFixed(0)} m/s` : '—';
   $('kpi-gust-label').textContent = windLabel(false);
   const states = [...new Set(S.counties.map((row) => row.state))].sort();
-  $('kpi-domain').textContent = `${states.join(' + ')} · ${S.counties.length} counties`;
+  $('kpi-domain').textContent = `${integer.format(S.counties.length)} counties · ${states.length > 20 ? 'CONUS' : states.join(' + ')}`;
+  $('kpi-domain').title = states.join(' + ');
+}
+
+function providerTargetIndex(providerId) {
+  const indices = providerFrameIndices(providerId);
+  if (!indices.length) return null;
+  if (providerId === 'weathernext2') return indices[0];
+  return indices.slice().sort((a, b) => {
+    const A = S.cycles[a], B = S.cycles[b];
+    const ta = Date.parse(A.issued_utc) || 0, tb = Date.parse(B.issued_utc) || 0;
+    return ta === tb ? Number(A.lead_hours || 0) - Number(B.lead_hours || 0) : tb - ta;
+  })[0];
+}
+
+function drawSourceSwitch() {
+  const host = $('source-switch');
+  if (!host) return;
+  const present = [...new Set(S.cycles.map((cycle) => providerFor(cycle.hazard_source).id))];
+  host.replaceChildren(...present.map((id) => {
+    const known = PROVIDERS.find((provider) => provider.id === id);
+    const sample = S.cycles[providerFrameIndices(id)[0]];
+    const provider = known || providerFor(sample && sample.hazard_source);
+    const button = document.createElement('button');
+    button.type = 'button'; button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', String(id === S.activeProvider));
+    const short = id === 'hrrr' ? 'NOAA HRRR' : id === 'weathernext2' ? 'WeatherNext 2' : provider.label;
+    button.innerHTML = `<b>${esc(short)}</b><span>${esc(providerCoverage(id))}</span>`;
+    button.title = `Show ${provider.label}`;
+    button.addEventListener('click', () => {
+      stopPlayback();
+      const target = providerTargetIndex(id);
+      if (target != null) loadCycle(target);
+    });
+    return button;
+  }));
 }
 
 // One row per forecast source, built from the cycles actually in the archive.
@@ -671,16 +791,9 @@ function drawSourceStack() {
       row.disabled = true;
       row.title = `${label} has no cycles in this archive.`;
     } else {
-      const count = group.indices.length;
-      state.textContent = id === activeId ? 'active' : `${count} cycle${count === 1 ? '' : 's'}`;
-      // Newest initialisation first, then the shortest lead within it: the
-      // cycle a reader most likely means when they click a source name.
-      const target = group.indices.slice().sort((a, b) => {
-        const A = S.cycles[a], B = S.cycles[b];
-        const ta = Date.parse(A.issued_utc) || 0, tb = Date.parse(B.issued_utc) || 0;
-        return ta === tb ? (A.lead_hours || 0) - (B.lead_hours || 0) : tb - ta;
-      })[0];
-      row.title = `Show ${label} · ${count} cycle${count === 1 ? '' : 's'} in this archive`;
+      state.textContent = id === activeId ? 'active' : providerCoverage(id);
+      const target = providerTargetIndex(id);
+      row.title = `Show ${label} · ${providerCoverage(id)}`;
       row.setAttribute('aria-pressed', String(id === activeId));
       row.addEventListener('click', () => { stopPlayback(); loadCycle(target); });
     }
@@ -695,6 +808,7 @@ function drawForecast() {
   $('provider-status').textContent = S.cycle.degraded_mode ? 'degraded' : (S.cycle.provider_status || 'ok');
   $('provider-status').className = `source-status${S.cycle.degraded_mode ? ' degraded' : ''}`;
   if (!storm) {
+    $('storm-symbol').className = 'storm-symbol field';
     $('storm-class').textContent = meta.event_type === 'tropical_cyclone' ? 'Cyclone metadata pending' : 'Area wind outlook · no cyclone track';
     $('storm-name').textContent = S.cycle.event_name;
     // No track means no center, no category and no wind radii - but the
@@ -708,6 +822,7 @@ function drawForecast() {
       `<div><b>${integer.format(galeCount)}</b><span>Counties ≥ 34 kt</span></div>`;
     $('storm-chip').hidden = true; return;
   }
+  $('storm-symbol').className = `storm-symbol${storm.isCyclone ? '' : ' low'}`;
   $('storm-class').textContent = `${storm.classification || 'Tropical cyclone'}${storm.category != null ? ` · Category ${storm.category}` : ''}`;
   $('storm-name').textContent = `${S.track.name || S.cycle.event_name} · ${S.track.storm_id || 'track supplied'}`;
   $('storm-stats').innerHTML = `<div><b>${Number(storm.center_lat).toFixed(1)}°, ${Math.abs(storm.center_lon).toFixed(1)}°W</b><span>Current center</span></div><div><b>${storm.max_wind_kt || '—'} kt</b><span>Maximum wind</span></div><div><b>${storm.min_pressure_hpa || '—'} hPa</b><span>Minimum pressure</span></div><div><b>+${Math.max(...storm.track.map((point) => point.lead_hours))} h</b><span>Track horizon</span></div>`;

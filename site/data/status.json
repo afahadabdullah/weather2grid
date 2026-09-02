@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "generated_at_utc": "2026-09-02T01:16:20.976183+00:00",
+  "generated_at_utc": "2026-09-02T04:42:33.356913+00:00",
   "cycles": 5,
   "operational": false,
   "shadow_mode": true,
@@ -17,7 +17,7 @@
     "event_name": "CONUS wind outlook",
     "issued_utc": "2026-09-01T21:00:00+00:00",
     "lead_hours": 0.0,
-    "age_hours": 4.27,
+    "age_hours": 7.71,
     "freshness": "degraded",
     "synthetic": false,
     "release_gate_passed": false,
@@ -25,6 +25,12 @@
     "provider_status": "ok",
     "model_artifact_id": "bplus-d306fae20f",
     "hazard_source": "hrrr_forecast_calibrated_county_centroid",
-    "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00"
+    "forecast_provider": "NOAA HRRR via AWS Open Data",
+    "valid_start_utc": "2026-09-01T21:00:00+00:00",
+    "valid_end_utc": "2026-09-02T15:00:00+00:00",
+    "forecast_window_hours": 18.0,
+    "forecast_horizon_hours": 18.0,
+    "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
+    "track_available": true
   }
 }

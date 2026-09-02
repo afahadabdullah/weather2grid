@@ -20,6 +20,9 @@ def test_export_archive_builds_static_contract(tmp_path: Path) -> None:
         "event_id": "event-1",
         "event_name": "Synthetic test",
         "forecast_init_time_utc": "2026-01-01T00:00:00+00:00",
+        "valid_start_utc": "2026-01-01T06:00:00+00:00",
+        "valid_end_utc": "2026-01-01T18:00:00+00:00",
+        "forecast_provider": "Test forecast provider",
         "synthetic": True,
         "release_gate_passed": False,
     }))
@@ -39,6 +42,10 @@ def test_export_archive_builds_static_contract(tmp_path: Path) -> None:
     summaries = export_archive(archive, output)
 
     assert [summary["cycle_id"] for summary in summaries] == [cycle.name]
+    assert summaries[0]["forecast_provider"] == "Test forecast provider"
+    assert summaries[0]["forecast_window_hours"] == 12.0
+    assert summaries[0]["forecast_horizon_hours"] == 18.0
+    assert summaries[0]["track_available"] is False
     status = json.loads((output / "status.json").read_text())
     assert status["any_synthetic"] is True
     counties = json.loads((output / "cycles" / cycle.name / "counties.json").read_text())
@@ -170,4 +177,3 @@ def test_export_archive_merge_preserves_existing_cycles(tmp_path: Path) -> None:
     assert status["latest"]["cycle_id"] == "20260101T0600Z"
     assert (output / "cycles" / "20260101T0000Z" / "counties.json").exists()
     assert (output / "cycles" / "20260101T0600Z" / "counties.json").exists()
-

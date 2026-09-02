@@ -4,7 +4,7 @@
   "event_name": "CONUS wind outlook",
   "issued_utc": "2026-09-01T21:00:00+00:00",
   "lead_hours": 0.0,
-  "age_hours": 4.27,
+  "age_hours": 7.71,
   "freshness": "degraded",
   "synthetic": false,
   "release_gate_passed": false,
@@ -133,5 +133,11 @@
     },
     "generated_utc": "2026-09-02T01:08:44.462431+00:00",
     "code_version": "0.0.1"
-  }
+  },
+  "forecast_provider": "NOAA HRRR via AWS Open Data",
+  "valid_start_utc": "2026-09-01T21:00:00+00:00",
+  "valid_end_utc": "2026-09-02T15:00:00+00:00",
+  "forecast_window_hours": 18.0,
+  "forecast_horizon_hours": 18.0,
+  "track_available": true
 }

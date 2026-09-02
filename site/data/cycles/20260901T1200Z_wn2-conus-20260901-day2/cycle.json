@@ -4,7 +4,7 @@
   "event_name": "CONUS wind outlook — Day 2",
   "issued_utc": "2026-09-01T12:00:00+00:00",
   "lead_hours": 30.0,
-  "age_hours": 13.27,
+  "age_hours": 16.71,
   "freshness": "degraded",
   "synthetic": false,
   "release_gate_passed": false,
@@ -12,7 +12,13 @@
   "provider_status": "ok",
   "model_artifact_id": "bplus-d306fae20f",
   "hazard_source": "weathernext2_100m_wind_proxy",
+  "forecast_provider": "Google DeepMind WeatherNext 2 via BigQuery",
+  "valid_start_utc": "2026-09-02T18:00:00+00:00",
+  "valid_end_utc": "2026-09-03T12:00:00+00:00",
+  "forecast_window_hours": 18.0,
+  "forecast_horizon_hours": 48.0,
   "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
+  "track_available": false,
   "fields": {
     "required": [
       "county_fips",
