@@ -47,8 +47,7 @@
 <main class="workspace">
   <section class="overview-head" aria-label="Active forecast">
     <div class="overview-title-group">
-      <span class="eyebrow">Active Risk Outlook</span>
-      <h1 id="event-name">Loading forecast…</h1>
+      <h1 id="event-name">Active Risk Outlook — Loading…</h1>
     </div>
     <div class="overview-source">
       <span>Operational Hazard Source</span>
@@ -123,6 +122,7 @@
 
           <div class="map-toolbar-right">
             <div class="overlay-controls" aria-label="Map overlays">
+              <button type="button" data-overlay="threshold" aria-pressed="true" title="Toggle Threshold Trigger Highlights"><i class="trig-key"></i>Triggered</button>
               <button type="button" data-overlay="states" aria-pressed="true" title="Toggle State Boundaries"><i class="state-key"></i>States</button>
               <button type="button" data-overlay="track" aria-pressed="true" title="Toggle Forecast Cyclone Track"><i class="line-key"></i>Track</button>
               <button type="button" data-overlay="wind" aria-pressed="true" title="Toggle Wind Radii / Swaths"><i class="ring-key"></i>Wind radii</button>

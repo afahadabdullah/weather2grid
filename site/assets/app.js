@@ -13,7 +13,7 @@ const S = {
   triggered: new Set(), selected: null, hoveredFips: null,
   playing: false, timer: null, loadToken: 0, curve: null, trackFrame: null,
   activeProvider: null,
-  overlays: { states: true, track: true, wind: true, extrapolation: false },
+  overlays: { states: true, track: true, wind: true, extrapolation: false, threshold: true },
   view: 'event', zoom: 1, panX: 0, panY: 0, dragging: null,
   mapScale: 1, mapBounds: null, mapOrigin: { ox: 0, oy: 0, x0: 0, y0: 0 },
   projectedCounties: [], projectedStates: [],
@@ -65,7 +65,7 @@ function providerCoverage(providerId) {
   if (!frames.length) return 'not in archive';
   const inputs = frames.reduce((sum, c) => sum + (Array.isArray(c.input_lead_hours) ? c.input_lead_hours.length : 0), 0);
   if (providerId === 'weathernext2') {
-    return `latest init · ${inputs || 'unknown'} leads · ${frames.length} windows`;
+    return `latest init · ${frames.length} daily windows (72h horizon)`;
   }
   const trackFrames = providerId === S.activeProvider && S.track && Array.isArray(S.track.points) ? S.track.points.length : null;
   return `latest init · ${inputs || 'unknown'} leads${trackFrames ? ` · ${trackFrames} track pts` : ''}`;
@@ -444,22 +444,35 @@ function updateCycleChrome() {
   const inputCount = Array.isArray(cycle.input_lead_hours) ? cycle.input_lead_hours.length
     : Array.isArray(cycle.meta && cycle.meta.input_lead_hours) ? cycle.meta.input_lead_hours.length : 0;
 
-  $('event-name').textContent = cycle.event_name || cycle.event_id;
+  const activeLead = trackPoint && trackPoint.lead_hours != null
+    ? trackPoint.lead_hours
+    : (cycle.lead_hours != null ? cycle.lead_hours : 0);
+
+  const issuedDate = new Date(cycle.issued_utc);
+  let issueStr = cycle.issued_utc;
+  if (!Number.isNaN(+issuedDate)) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const utcHours = String(issuedDate.getUTCHours()).padStart(2, '0');
+    const utcMins = String(issuedDate.getUTCMinutes()).padStart(2, '0');
+    issueStr = `${months[issuedDate.getUTCMonth()]} ${issuedDate.getUTCDate()}, ${utcHours}:${utcMins} UTC`;
+  }
+  const leadSign = Number(activeLead) > 0 ? `+${activeLead}` : `${activeLead}`;
+  $('event-name').textContent = `Active Risk Outlook — Issue ${issueStr} Lead ${leadSign}h`;
   $('overview-provider').textContent = `${shortProv} · ${providerCoverage(prov.id)}`;
   $('cycle-time').textContent = trackPoint ? formatValidInstant(trackPoint.valid_utc) : formatValidRange(cycle);
   $('cycle-init').textContent = `Initialized ${formatCycleTime(cycle.issued_utc)}`;
   $('cycle-counter').textContent = trackPoint
-    ? `${shortProv} · track point ${position + 1} of ${frames.length}`
-    : `${shortProv} · forecast lead ${position + 1} of ${frames.length}`;
+    ? `${shortProv} · track fix ${position + 1} of ${frames.length}`
+    : `${shortProv} · window ${position + 1} of ${frames.length}`;
 
   const leadEl = $('cycle-lead');
-  leadEl.textContent = trackPoint ? `Lead +${trackPoint.lead_hours}h · storm center` : `${formatCycleLead(cycle)} · ${inputCount || 'unknown'} leads`;
+  leadEl.textContent = trackPoint ? `Lead +${trackPoint.lead_hours}h · storm center` : `${formatCycleLead(cycle)} (${inputCount || '4'} weather model steps)`;
 
   const note = $('frame-note');
   if (note) {
     note.textContent = trackPoint
       ? `Moves through ${frames.length} track fixes. County risk field represents +${cycle.forecast_horizon_hours || 18}h aggregate.`
-      : `Aggregate risk outlook across ${inputCount || 'all'} forecast horizon leads.`;
+      : `Window ${position + 1} of ${frames.length}: 18h cumulative outage risk synthesized from ${inputCount || '4'} weather model leads.`;
   }
 
   const liveAgeHours = Number.isNaN(+issued) ? null : (Date.now() - issued.getTime()) / 36e5;
@@ -471,8 +484,9 @@ function updateCycleChrome() {
   [...$('cycle-dots').children].forEach((dot, i) => dot.classList.toggle('active', i === position));
 
   document.querySelectorAll('[data-overlay="track"],[data-overlay="wind"],[data-view="storm"]').forEach((btn) => {
-    btn.disabled = !S.track;
-    btn.title = S.track ? '' : 'No cyclone track in this product.';
+    const hasTrackOrStorm = Boolean(S.track || (S.nhcTracks && S.nhcTracks.length));
+    btn.disabled = !hasTrackOrStorm;
+    btn.title = hasTrackOrStorm ? '' : 'No cyclone or storm track available.';
   });
 }
 
@@ -709,14 +723,29 @@ function projectMapGeometry() {
 
   // Determine view bounds
   const storm = stormMeta();
+  const officialStorms = (S.nhcTracks || []).map((item) => stormMeta(item, null)).filter(Boolean)
+    .filter((item) => !storm || item.stormId !== storm.stormId);
+  const visibleStorms = [...(storm ? [storm] : []), ...officialStorms];
+  const visibleTracks = visibleStorms.flatMap((item) => item.track || []);
+
   let b = [...countyBounds];
   if (S.view === 'conus' && rawStates.length) {
     b = [...stateBounds];
-  } else if (S.view === 'storm' && storm && storm.track && storm.track.length) {
+  } else if (S.view === 'storm' && visibleTracks.length) {
     b = [Infinity, Infinity, -Infinity, -Infinity];
-    storm.track.forEach((pt) => {
+    visibleStorms.forEach((item) => {
+      (item.track || []).forEach((pt) => {
+        const [px, py] = proj(pt.lon, pt.lat);
+        const windKm = Math.max(pt.uncertainty_km || 0, (item.wind_radii_km && item.wind_radii_km['34kt']) || 150);
+        const r = (windKm + 180) / 6371;
+        b[0] = Math.min(b[0], px - r); b[1] = Math.min(b[1], py - r);
+        b[2] = Math.max(b[2], px + r); b[3] = Math.max(b[3], py + r);
+      });
+    });
+  } else if (S.view === 'event' && S.overlays.track && visibleTracks.length) {
+    visibleTracks.forEach((pt) => {
       const [px, py] = proj(pt.lon, pt.lat);
-      const r = Math.max(pt.uncertainty_km || 0, 150) / 6371;
+      const r = Math.max(0, pt.uncertainty_km || 0) / 6371;
       b[0] = Math.min(b[0], px - r); b[1] = Math.min(b[1], py - r);
       b[2] = Math.max(b[2], px + r); b[3] = Math.max(b[3], py + r);
     });
@@ -862,15 +891,35 @@ function drawMapCanvas() {
   }
 
   // 3. Triggered Counties (Threshold Highlight)
-  if (S.triggered.size > 0) {
+  if (S.overlays.threshold !== false && S.triggered.size > 0) {
     ctx.save();
-    ctx.strokeStyle = '#fbbf24';
-    ctx.lineWidth = Math.max(1.2, 1.6 / S.zoom);
-    ctx.shadowColor = 'rgba(251, 191, 36, 0.4)';
-    ctx.shadowBlur = 4;
+    // A. Delicate, ultra-fine boundary hairline (0.75px constant screen width, NO thick boxes, NO blur)
+    ctx.strokeStyle = isDark ? 'rgba(251, 191, 36, 0.55)' : 'rgba(217, 119, 6, 0.6)';
+    ctx.lineWidth = 0.75 / S.zoom;
     for (const c of S.projectedCounties) {
       if (S.triggered.has(c.fips)) {
         ctx.stroke(c.path);
+      }
+    }
+
+    // B. Centroid Alert Radar Pip: small beacon dot at county center
+    // Leaves the interior shaded colors 100% clear and unobstructed!
+    for (const c of S.projectedCounties) {
+      if (S.triggered.has(c.fips)) {
+        const [cx, cy] = c.centroid;
+        // Soft outer amber halo
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4.5 / S.zoom, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(251, 191, 36, 0.22)';
+        ctx.fill();
+        // Crisp center alert pip
+        ctx.beginPath();
+        ctx.arc(cx, cy, 2 / S.zoom, 0, Math.PI * 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fill();
+        ctx.strokeStyle = isDark ? '#081119' : '#ffffff';
+        ctx.lineWidth = 0.6 / S.zoom;
+        ctx.stroke();
       }
     }
     ctx.restore();
@@ -1580,7 +1629,7 @@ function drawSourceStack() {
     row.type = 'button';
     row.className = 'source-row active';
     row.title = 'Show official NOAA NHC active tracks.';
-    row.innerHTML = `<span><i></i><b>NOAA NHC ocean storms</b></span><em>${S.nhcTracks.length} active</em>`;
+    row.innerHTML = `<span><i></i><b>NOAA NHC ocean storms</b></span><em>${S.nhcTracks.length} active track${S.nhcTracks.length === 1 ? '' : 's'}</em>`;
     row.addEventListener('click', () => {
       S.view = 'storm';
       document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === 'storm')));

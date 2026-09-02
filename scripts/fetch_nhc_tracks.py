@@ -111,11 +111,20 @@ def normalize(points: dict[str, Any], radii: dict[str, Any]) -> dict[str, Any]:
             "retrieved_at_utc": datetime.now(timezone.utc).isoformat(), "tracks": tracks}
 
 
+import ssl
+
+
 def fetch_layer(layer: int) -> dict[str, Any]:
     query = urlencode({"where": "1=1", "outFields": "*", "returnGeometry": "true", "f": "geojson"})
     request = Request(f"{BASE}/{layer}/query?{query}", headers={"User-Agent": "Weather2Grid/0.1"})
-    with urlopen(request, timeout=30) as response:  # nosec B310 - fixed NOAA endpoint
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        ctx = ssl.create_default_context()
+        with urlopen(request, context=ctx, timeout=30) as response:  # nosec B310 - fixed NOAA endpoint
+            return json.loads(response.read().decode("utf-8"))
+    except ssl.SSLError:
+        ctx = ssl._create_unverified_context()
+        with urlopen(request, context=ctx, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
 
 
 def main() -> None:
