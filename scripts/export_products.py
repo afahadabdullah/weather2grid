@@ -197,6 +197,55 @@ def banner(any_synthetic: bool, any_ungated: bool) -> dict[str, str]:
     }
 
 
+# Coordinate and value precision published to the browser.
+#
+# COORD_DECIMALS=4 is ~11 m at CONUS latitudes. The dashboard's most zoomed-in
+# pixel is roughly 600 m across, so this is about sixty times finer than
+# anything a viewer can resolve - but it is what makes the content hash of two
+# byte-different exports of the *same* county boundaries agree. Before this,
+# one archive wrote full float64 coordinates and another wrote six decimals, so
+# `publish_geometry` hashed them differently and shipped two ~3-5 MB copies of
+# an identical CONUS county layer; a user switching forecast source downloaded
+# the second one for nothing.
+#
+# VALUE_SIGFIGS=6 applies the same reasoning to county metrics. The UI formats
+# them to at most one decimal place, so seventeen significant digits of a
+# float64 repr are pure transfer cost.
+COORD_DECIMALS = 4
+VALUE_SIGFIGS = 6
+
+
+def round_sig(value: float, digits: int = VALUE_SIGFIGS) -> float:
+    """Round to a fixed number of significant digits, keeping tiny quantiles."""
+    if value == 0 or not math.isfinite(value):
+        return value
+    return round(value, digits - 1 - math.floor(math.log10(abs(value))))
+
+
+def quantize_value(value: Any) -> Any:
+    if isinstance(value, bool) or not isinstance(value, float):
+        return value
+    rounded = round_sig(value)
+    # 33.0 costs three bytes less than 33.3360141700736 and reads the same.
+    return int(rounded) if rounded == int(rounded) and abs(rounded) < 1e15 else rounded
+
+
+def quantize_coordinates(coordinates: Any) -> Any:
+    """Round a GeoJSON coordinate tree to COORD_DECIMALS in place of float64."""
+    if coordinates and isinstance(coordinates[0], (int, float)):
+        return [round(float(coordinates[0]), COORD_DECIMALS),
+                round(float(coordinates[1]), COORD_DECIMALS)]
+    return [quantize_coordinates(item) for item in coordinates]
+
+
+def quantize_geojson(geometry: dict[str, Any]) -> dict[str, Any]:
+    for feature in geometry.get("features", []):
+        shape = feature.get("geometry") or {}
+        if shape.get("coordinates") is not None:
+            shape["coordinates"] = quantize_coordinates(shape["coordinates"])
+    return geometry
+
+
 def records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     frame = frame.copy()
     if "county_fips" in frame:
@@ -209,21 +258,68 @@ def columnar_counties(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "format": "w2g-columnar-v1",
         "columns": columns,
-        "rows": [[clean(row.get(column)) for column in columns] for row in rows],
+        "rows": [[quantize_value(clean(row.get(column))) for column in columns]
+                 for row in rows],
     }
+
+
+# Two archives can carry the same county layer at different float precision -
+# one from the shapefile at full float64, one already rounded. Their bytes
+# never match, so a pure content hash publishes both, and the browser downloads
+# a second multi-megabyte copy of boundaries it has already drawn. Anything
+# that agrees to within the precision we publish renders identically, so it is
+# the same layer for this dashboard's purposes.
+# The tolerance is one and a half published grid steps (~16 m): a vertex that
+# straddles a rounding boundary lands exactly one step away, and comparing
+# floats at exactly one step is a coin flip on the last bit.
+MATCH_TOLERANCE_DEG = 1.5 * 10 ** -COORD_DECIMALS
+
+
+def _feature_rings(feature: dict[str, Any]) -> list[list[list[float]]]:
+    shape = feature.get("geometry") or {}
+    coordinates = shape.get("coordinates") or []
+    polygons = [coordinates] if shape.get("type") == "Polygon" else coordinates
+    return [ring for polygon in polygons for ring in polygon]
+
+
+def _feature_key(feature: dict[str, Any]) -> str:
+    properties = feature.get("properties") or {}
+    return str(properties.get("county_fips") or properties.get("state") or feature.get("id") or "")
+
+
+def same_layer(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """True when two GeoJSON layers agree to within published precision."""
+    a = {_feature_key(f): f for f in left.get("features", [])}
+    b = {_feature_key(f): f for f in right.get("features", [])}
+    if a.keys() != b.keys():
+        return False
+    for key, feature in a.items():
+        rings_a, rings_b = _feature_rings(feature), _feature_rings(b[key])
+        if [len(r) for r in rings_a] != [len(r) for r in rings_b]:
+            return False
+        for ring_a, ring_b in zip(rings_a, rings_b):
+            for point_a, point_b in zip(ring_a, ring_b):
+                if (abs(point_a[0] - point_b[0]) > MATCH_TOLERANCE_DEG
+                        or abs(point_a[1] - point_b[1]) > MATCH_TOLERANCE_DEG):
+                    return False
+    return True
 
 
 def publish_geometry(source: Path, staging: Path) -> str:
     """Write one compact content-addressed copy of repeated county geometry."""
-    geometry = json.loads(source.read_bytes())
+    geometry = quantize_geojson(json.loads(source.read_bytes()))
     serialized = json.dumps(
         geometry, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
     relative = Path("geometries") / f"{digest}.geojson"
     target = staging / relative
-    if not target.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(serialized, encoding="utf-8")
+    if target.exists():
+        return relative.as_posix()
+    for published in sorted((staging / "geometries").glob("*.geojson")):
+        if same_layer(json.loads(published.read_bytes()), geometry):
+            return published.relative_to(staging).as_posix()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(serialized, encoding="utf-8")
     return relative.as_posix()
 
 
@@ -387,9 +483,11 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
     basemap = archive / "basemap.geojson"
     existing_basemap = output / "basemap.geojson"
     if basemap.exists():
-        shutil.copyfile(basemap, staging / "basemap.geojson")
+        write_compact_json(staging / "basemap.geojson",
+                           quantize_geojson(json.loads(basemap.read_bytes())))
     elif existing_basemap.exists():
-        shutil.copyfile(existing_basemap, staging / "basemap.geojson")
+        write_compact_json(staging / "basemap.geojson",
+                           quantize_geojson(json.loads(existing_basemap.read_bytes())))
     else:
         write_json(staging / "basemap.geojson", {"type": "FeatureCollection", "features": []})
     return summaries

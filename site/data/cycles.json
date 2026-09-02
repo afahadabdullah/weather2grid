@@ -43,7 +43,7 @@
     "display_frame_count": 1,
     "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-    "geometry_path": "geometries/bdc4f67916116e7c.geojson",
+    "geometry_path": "geometries/620f10a177ab8e17.geojson",
     "track_available": true
   },
   {
@@ -75,7 +75,7 @@
     "display_frame_count": 1,
     "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-    "geometry_path": "geometries/18fcd43e411f9cee.geojson",
+    "geometry_path": "geometries/620f10a177ab8e17.geojson",
     "track_available": false
   },
   {
@@ -107,7 +107,7 @@
     "display_frame_count": 1,
     "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-    "geometry_path": "geometries/18fcd43e411f9cee.geojson",
+    "geometry_path": "geometries/620f10a177ab8e17.geojson",
     "track_available": false
   },
   {
@@ -139,7 +139,7 @@
     "display_frame_count": 1,
     "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-    "geometry_path": "geometries/18fcd43e411f9cee.geojson",
+    "geometry_path": "geometries/620f10a177ab8e17.geojson",
     "track_available": false
   }
 ]
