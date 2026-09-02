@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "generated_at_utc": "2026-09-02T04:58:38.718759+00:00",
+  "generated_at_utc": "2026-09-02T05:09:17.085486+00:00",
   "cycles": 4,
   "operational": false,
   "shadow_mode": true,
@@ -17,7 +17,7 @@
     "event_name": "CONUS wind outlook",
     "issued_utc": "2026-09-01T21:00:00+00:00",
     "lead_hours": 0.0,
-    "age_hours": 7.98,
+    "age_hours": 8.15,
     "freshness": "degraded",
     "synthetic": false,
     "release_gate_passed": false,
@@ -53,7 +53,9 @@
     ],
     "lead_step_hours": 1.0,
     "display_frame_count": 1,
+    "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
+    "geometry_path": "geometries/bdc4f67916116e7c.geojson",
     "track_available": true
   }
 }

@@ -5,7 +5,7 @@
     "event_name": "CONUS wind outlook",
     "issued_utc": "2026-09-01T21:00:00+00:00",
     "lead_hours": 0.0,
-    "age_hours": 7.98,
+    "age_hours": 8.15,
     "freshness": "degraded",
     "synthetic": false,
     "release_gate_passed": false,
@@ -41,7 +41,9 @@
     ],
     "lead_step_hours": 1.0,
     "display_frame_count": 1,
+    "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
+    "geometry_path": "geometries/bdc4f67916116e7c.geojson",
     "track_available": true
   },
   {
@@ -50,7 +52,7 @@
     "event_name": "CONUS wind outlook — Day 3",
     "issued_utc": "2026-09-01T12:00:00+00:00",
     "lead_hours": 54.0,
-    "age_hours": 16.98,
+    "age_hours": 17.15,
     "freshness": "degraded",
     "synthetic": false,
     "release_gate_passed": false,
@@ -71,7 +73,9 @@
     ],
     "lead_step_hours": 6.0,
     "display_frame_count": 1,
+    "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
+    "geometry_path": "geometries/18fcd43e411f9cee.geojson",
     "track_available": false
   },
   {
@@ -80,7 +84,7 @@
     "event_name": "CONUS wind outlook — Day 2",
     "issued_utc": "2026-09-01T12:00:00+00:00",
     "lead_hours": 30.0,
-    "age_hours": 16.98,
+    "age_hours": 17.15,
     "freshness": "degraded",
     "synthetic": false,
     "release_gate_passed": false,
@@ -101,7 +105,9 @@
     ],
     "lead_step_hours": 6.0,
     "display_frame_count": 1,
+    "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
+    "geometry_path": "geometries/18fcd43e411f9cee.geojson",
     "track_available": false
   },
   {
@@ -110,7 +116,7 @@
     "event_name": "CONUS wind outlook — Day 1",
     "issued_utc": "2026-09-01T12:00:00+00:00",
     "lead_hours": 6.0,
-    "age_hours": 16.98,
+    "age_hours": 17.15,
     "freshness": "degraded",
     "synthetic": false,
     "release_gate_passed": false,
@@ -131,7 +137,9 @@
     ],
     "lead_step_hours": 6.0,
     "display_frame_count": 1,
+    "county_data_format": "w2g-columnar-v1",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
+    "geometry_path": "geometries/18fcd43e411f9cee.geojson",
     "track_available": false
   }
 ]

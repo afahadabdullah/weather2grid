@@ -6,7 +6,21 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from scripts.export_products import export_archive
+from scripts.export_products import export_archive, publish_geometry
+
+
+def test_geometry_hash_uses_compact_served_content(tmp_path: Path) -> None:
+    first = tmp_path / "first.geojson"
+    second = tmp_path / "second.geojson"
+    first.write_text('{"type": "FeatureCollection", "features": []}')
+    second.write_text('{\n  "type":"FeatureCollection",\n  "features":[]\n}')
+    staging = tmp_path / "site-data"
+
+    first_path = publish_geometry(first, staging)
+    second_path = publish_geometry(second, staging)
+
+    assert first_path == second_path
+    assert len(list((staging / "geometries").glob("*.geojson"))) == 1
 
 
 def test_export_archive_builds_static_contract(tmp_path: Path) -> None:
@@ -49,9 +63,13 @@ def test_export_archive_builds_static_contract(tmp_path: Path) -> None:
     status = json.loads((output / "status.json").read_text())
     assert status["any_synthetic"] is True
     counties = json.loads((output / "cycles" / cycle.name / "counties.json").read_text())
-    assert counties[0]["training_event_exclusions"] == ["held-out-event"]
-    assert counties[0]["county_fips"] == "01001"
-    assert (output / "cycles" / cycle.name / "counties.geojson").exists()
+    assert counties["format"] == "w2g-columnar-v1"
+    assert summaries[0]["county_data_format"] == "w2g-columnar-v1"
+    fips_index = counties["columns"].index("county_fips")
+    assert counties["rows"][0][fips_index] == "01001"
+    summary = json.loads((output / "cycles.json").read_text())[0]
+    assert (output / summary["geometry_path"]).exists()
+    assert not (output / "cycles" / cycle.name / "counties.geojson").exists()
     assert json.loads((output / "cycles" / cycle.name / "track.json").read_text())["available"] is False
 
 

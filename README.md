@@ -105,9 +105,14 @@ The exporter expects this StormGrid output layout:
     └── counties.geojson            optional cycle-specific geometry
 ```
 
-Weather2Grid writes browser-ready files under `site/data/cycles/<cycle_id>/`.
-The adjustable threshold and cost/loss curve are calculated in the browser
-from `prob_outage_fraction_gt_05`, so they remain interactive without an API.
+Weather2Grid writes compact browser-ready files under
+`site/data/cycles/<cycle_id>/`. County attributes use the static
+`w2g-columnar-v1` JSON layout (a column-name array plus row-value arrays), and
+identical county GeoJSON is stored once under `site/data/geometries/` using a
+content hash. Both are ordinary files supported by GitHub Pages; no API,
+database, decompression library, or build-time JavaScript is required. The
+adjustable threshold and cost/loss curve are calculated in the browser from
+`prob_outage_fraction_gt_05`.
 
 ## Moving to real forecast data
 

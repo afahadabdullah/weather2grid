@@ -7,6 +7,7 @@ consumes only the versioned product contract written by the modeling pipeline.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -16,6 +17,17 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+DASHBOARD_COLUMNS = [
+    "county_fips", "county_name", "state", "customers_total",
+    "expected_customers_out", "p90_customers_out", "expected_outage_fraction",
+    "prob_outage_fraction_gt_05", "weather_spread_pp", "impact_spread_pp",
+    "peak_gust_ms", "duration_hr", "training_envelope_flag",
+    "hazard_reference_quality", "data_quality_flag", "product_confidence",
+    "q05_outage_fraction", "q10_outage_fraction", "q25_outage_fraction",
+    "q50_outage_fraction", "q75_outage_fraction", "q90_outage_fraction",
+    "q95_outage_fraction", "q99_outage_fraction",
+]
 
 
 def clean(value: Any) -> Any:
@@ -41,6 +53,13 @@ def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+
+def write_compact_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False),
         encoding="utf-8",
     )
 
@@ -113,6 +132,7 @@ def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
         "input_lead_hours": clean(input_leads),
         "lead_step_hours": clean(lead_step),
         "display_frame_count": 1,
+        "county_data_format": "w2g-columnar-v1",
         "training_data_cutoff_utc": meta.get("training_data_cutoff_utc"),
     }
 
@@ -145,6 +165,18 @@ def _discard_older_initializations(summaries: list[dict[str, Any]], staging: Pat
     return kept
 
 
+def _discard_unreferenced_geometries(
+        summaries: list[dict[str, Any]], staging: Path) -> None:
+    used = {str(summary.get("geometry_path")) for summary in summaries}
+    geometry_root = staging / "geometries"
+    if not geometry_root.exists():
+        return
+    for geometry in geometry_root.glob("*.geojson"):
+        relative = geometry.relative_to(staging).as_posix()
+        if relative not in used:
+            geometry.unlink()
+
+
 def banner(any_synthetic: bool, any_ungated: bool) -> dict[str, str]:
     if any_synthetic:
         return {
@@ -170,6 +202,29 @@ def records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     if "county_fips" in frame:
         frame["county_fips"] = frame["county_fips"].astype(str).str.zfill(5)
     return [{key: clean(value) for key, value in row.items()} for row in frame.to_dict("records")]
+
+def columnar_counties(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Encode county rows without repeating every field name for every county."""
+    columns = [column for column in DASHBOARD_COLUMNS if any(column in row for row in rows)]
+    return {
+        "format": "w2g-columnar-v1",
+        "columns": columns,
+        "rows": [[clean(row.get(column)) for column in columns] for row in rows],
+    }
+
+
+def publish_geometry(source: Path, staging: Path) -> str:
+    """Write one compact content-addressed copy of repeated county geometry."""
+    geometry = json.loads(source.read_bytes())
+    serialized = json.dumps(
+        geometry, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+    relative = Path("geometries") / f"{digest}.geojson"
+    target = staging / relative
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(serialized, encoding="utf-8")
+    return relative.as_posix()
 
 
 def _build_snapshot(archive: Path, cycle_paths: list[Path],
@@ -208,12 +263,14 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
             "optional_absent": [],
             "cdf_quantiles": sorted(column for column in frame if column.startswith("q") and column.endswith("_outage_fraction")),
         }
-        write_json(target / "counties.json", records(frame))
+        dashboard_columns = [column for column in DASHBOARD_COLUMNS if column in frame]
+        county_rows = records(frame[dashboard_columns])
+        write_compact_json(target / "counties.json", columnar_counties(county_rows))
 
         geometry = source / "counties.geojson"
         if not geometry.exists():
             geometry = archive / "counties.geojson"
-        shutil.copyfile(geometry, target / "counties.geojson")
+        summary["geometry_path"] = publish_geometry(geometry, staging)
 
         track = source / "track.json"
         if not track.exists():
@@ -244,6 +301,19 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
                 existing_cycle_data = json.loads(meta_file.read_text(encoding="utf-8"))
                 meta = existing_cycle_data.get("meta", existing_cycle_data)
                 summary = cycle_summary(meta, now)
+                counties_file = dest_dir / "counties.json"
+                county_payload = json.loads(counties_file.read_text(encoding="utf-8"))
+                if isinstance(county_payload, list):
+                    write_compact_json(
+                        counties_file, columnar_counties(county_payload))
+                geometry_file = dest_dir / "counties.geojson"
+                if not geometry_file.exists() and existing_cycle_data.get("geometry_path"):
+                    geometry_file = output / str(existing_cycle_data["geometry_path"])
+                if geometry_file.exists():
+                    summary["geometry_path"] = publish_geometry(geometry_file, staging)
+                    cycle_geometry = dest_dir / "counties.geojson"
+                    if cycle_geometry.exists():
+                        cycle_geometry.unlink()
                 track_file = dest_dir / "track.json"
                 if track_file.exists():
                     try:
@@ -261,6 +331,7 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
                 summaries.append(summary)
 
     summaries = _discard_older_initializations(summaries, staging)
+    _discard_unreferenced_geometries(summaries, staging)
     summaries.sort(key=lambda item: item["cycle_id"], reverse=True)
     any_synthetic = any(item["synthetic"] for item in summaries)
     any_ungated = any(not item["release_gate_passed"] for item in summaries)

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -21,3 +22,17 @@ def test_committed_demo_has_required_entrypoints() -> None:
     assert (SITE / "data" / "status.json").exists()
     assert (SITE / "data" / "cycles.json").exists()
     assert (SITE / "data" / "basemap.geojson").exists()
+
+
+def test_committed_static_payload_stays_within_pages_budget() -> None:
+    total = sum(path.stat().st_size for path in (SITE / "data").rglob("*") if path.is_file())
+    assert total < 20_000_000
+    for counties in (SITE / "data" / "cycles").glob("*/counties.json"):
+        assert counties.stat().st_size < 2_000_000
+    summaries = json.loads((SITE / "data" / "cycles.json").read_text())
+    referenced = {summary["geometry_path"] for summary in summaries}
+    stored = {
+        path.relative_to(SITE / "data").as_posix()
+        for path in (SITE / "data" / "geometries").glob("*.geojson")
+    }
+    assert stored == referenced

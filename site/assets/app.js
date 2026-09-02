@@ -16,6 +16,7 @@ const S = {
   overlays: { states: true, track: true, wind: true, extrapolation: false },
   view: 'event', zoom: 1, panX: 0, panY: 0, dragging: null,
   countiesGeoProjected: null, statesGeoProjected: null,
+  geometryProjectionCache: new Map(), geometryKey: null, mapScreen: null,
 };
 
 const LAYERS = [
@@ -137,10 +138,39 @@ async function j(url) {
   return response.json();
 }
 
+const JSON_CACHE = new Map();
+function cachedJson(url) {
+  if (!JSON_CACHE.has(url)) {
+    const request = j(url).catch((error) => {
+      JSON_CACHE.delete(url);
+      throw error;
+    });
+    JSON_CACHE.set(url, request);
+  }
+  return JSON_CACHE.get(url);
+}
+
+function decodeCountyData(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || payload.format !== 'w2g-columnar-v1'
+      || !Array.isArray(payload.columns) || !Array.isArray(payload.rows)) {
+    throw new Error('Unsupported county data format');
+  }
+  return payload.rows.map((values) => {
+    const row = {};
+    for (let index = 0; index < payload.columns.length; index += 1) {
+      row[payload.columns[index]] = values[index];
+    }
+    return row;
+  });
+}
+
 async function boot() {
-  const status = await j('data/status.json');
+  const status = await cachedJson('data/status.json');
   showBanner(status.banner);
-  [S.cycles, S.basemap] = await Promise.all([j('data/cycles.json'), j('data/basemap.geojson')]);
+  [S.cycles, S.basemap] = await Promise.all([
+    cachedJson('data/cycles.json'), cachedJson('data/basemap.geojson'),
+  ]);
   if (!S.cycles.length) { $('event-name').textContent = 'No forecast products found'; return; }
   S.cycles.sort((a, b) => frameStartMs(a) - frameStartMs(b));
   const initialIndex = S.cycles.reduce((best, cycle, index) => {
@@ -219,7 +249,7 @@ async function selectFrame(frame) {
     return;
   }
   S.trackFrame = frame.trackIndex;
-  updateFrameNavigation(); updateCycleChrome(); drawForecast(); drawMap();
+  updateFrameNavigation(); updateCycleChrome(); drawForecast(); redrawStormOnly();
 }
 
 function updateFrameNavigation() {
@@ -237,30 +267,46 @@ async function loadCycle(index, requestedTrackFrame = null) {
   const token = ++S.loadToken;
   const summary = S.cycles[i];
   const root = `data/cycles/${encodeURIComponent(summary.cycle_id)}`;
+  const geometryUrl = summary.geometry_path
+    ? `data/${summary.geometry_path}` : `${root}/counties.geojson`;
   const [cycle, counties, geo, track] = await Promise.all([
-    j(`${root}/cycle.json`),
-    j(`${root}/counties.json`),
-    j(`${root}/counties.geojson`),
-    j(`${root}/track.json`),
+    cachedJson(`${root}/cycle.json`),
+    cachedJson(`${root}/counties.json`),
+    cachedJson(geometryUrl),
+    cachedJson(`${root}/track.json`),
   ]);
   if (token !== S.loadToken) return;
-  S.idx = i; S.cycle = cycle; S.counties = counties; S.geo = geo;
+  S.idx = i; S.cycle = cycle; S.counties = decodeCountyData(counties); S.geo = geo;
   S.activeProvider = providerFor(summary.hazard_source).id;
-  S.countiesGeoProjected = null;
+  S.geometryKey = geometryUrl;
+  S.countiesGeoProjected = S.geometryProjectionCache.get(geometryUrl) || null;
   S.track = track && track.available !== false ? track : null;
   S.trackFrame = S.track ? Math.max(0, Math.min(
     S.track.points.length - 1,
     requestedTrackFrame == null ? Number(S.track.current_index || 0) : requestedTrackFrame,
   )) : null;
   S.curve = null;
-  S.byFips = new Map(counties.map((row) => [String(row.county_fips), row]));
+  S.byFips = new Map(S.counties.map((row) => [String(row.county_fips), row]));
   updateFrameNavigation(); updateCycleChrome(); buildLayers();
   drawProvenance(); drawSplit(); drawPriority(); drawForecast(); drawSourceStack(); drawTail();
   await refreshTriggered();
   if (token !== S.loadToken) return;
   drawKpis(); drawMap(); await drawCurve();
+  scheduleCyclePrefetch();
   if (S.selected && S.byFips.has(S.selected)) openDrawer(S.selected);
   else if (S.selected) closeDrawer();
+}
+
+function scheduleCyclePrefetch() {
+  const run = () => providerFrameIndices().filter((index) => index !== S.idx).forEach((index) => {
+    const summary = S.cycles[index], root = `data/cycles/${encodeURIComponent(summary.cycle_id)}`;
+    const geometryUrl = summary.geometry_path
+      ? `data/${summary.geometry_path}` : `${root}/counties.geojson`;
+    [`${root}/cycle.json`, `${root}/counties.json`, geometryUrl, `${root}/track.json`]
+      .forEach((url) => { cachedJson(url).catch(() => {}); });
+  });
+  if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 1500 });
+  else setTimeout(run, 50);
 }
 
 function formatCycleTime(issuedStr) {
@@ -384,7 +430,7 @@ function buildLayers() {
     button.addEventListener('click', () => {
       S.layer = layer.key;
       [...host.children].forEach((child) => child.setAttribute('aria-selected', String(child === button)));
-      drawMap();
+      updateCountyLayer();
     });
     host.appendChild(button);
   });
@@ -525,7 +571,10 @@ function drawMap() {
     }
     return { bounds, paths };
   };
-  if (!S.countiesGeoProjected) S.countiesGeoProjected = projectCollection(S.geo, 'county_fips');
+  if (!S.countiesGeoProjected) {
+    S.countiesGeoProjected = projectCollection(S.geo, 'county_fips');
+    S.geometryProjectionCache.set(S.geometryKey, S.countiesGeoProjected);
+  }
   if (!S.statesGeoProjected) S.statesGeoProjected = projectCollection(S.basemap, 'state');
   const countiesGeo = S.countiesGeoProjected, statesGeo = S.statesGeoProjected;
   const storm = stormMeta(), track = storm && Array.isArray(storm.track) ? storm.track : [];
@@ -556,6 +605,7 @@ function drawMap() {
   S.mapScale = scale;
   const ox = pad + ((W - pad * 2) - (x1 - x0) * scale) / 2, oy = pad + ((H - pad * 2) - (y1 - y0) * scale) / 2;
   const screen = (lon, lat) => { const [x, y] = proj(lon, lat); return [ox + (x - x0) * scale, oy + (y - y0) * scale]; };
+  S.mapScreen = screen;
   const layer = activeLayer(), [lo, hi] = layerDomain(layer), stops = RAMPS[layer.ramp];
   const hatchTile = 6 / scale;
   let out = `<defs><pattern id="hatch" width="${hatchTile}" height="${hatchTile}" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="${hatchTile}" stroke="#d9edf1" stroke-width="${hatchTile / 5}" opacity=".22"/></pattern></defs>`;
@@ -588,7 +638,7 @@ function drawMap() {
     statesGeo.paths.forEach((path) => { out += `<path class="state-shape" d="${path.d}" vector-effect="non-scaling-stroke"><title>${esc(path.id)}</title></path>`; });
     out += '</g>';
   }
-  if (track.length) out += drawStormOverlay(track, storm, screen, scale);
+  out += `<g id="storm-overlay">${track.length ? drawStormOverlay(track, storm, screen, scale) : ''}</g>`;
   out += '</g>';
   svg.innerHTML = out;
   svg.querySelectorAll('.county').forEach((node) => {
@@ -600,6 +650,30 @@ function drawMap() {
   const viewLabel = S.view === 'storm' ? 'Storm view' : S.view === 'conus' ? 'CONUS view' : 'Event view';
   $('map-domain').textContent = `${viewLabel} · ${integer.format(S.counties.length)} counties`;
   $('map-domain').title = `${states.join(' + ')} county footprint${track.length ? ' with supplied storm track' : ''}`;
+}
+
+function redrawStormOnly() {
+  const host = $('storm-overlay'), storm = stormMeta();
+  if (!host || !S.mapScreen || !storm) { drawMap(); return; }
+  host.innerHTML = drawStormOverlay(storm.track, storm, S.mapScreen, S.mapScale);
+}
+
+function updateCountyLayer() {
+  const svg = $('map'), nodes = svg.querySelectorAll('.county');
+  if (!nodes.length) { drawMap(); return; }
+  const layer = activeLayer(), [lo, hi] = layerDomain(layer), stops = RAMPS[layer.ramp];
+  $('map-title').textContent = S.layer === 'peak_gust_ms' ? 'County wind field' : 'County outage risk';
+  nodes.forEach((node) => {
+    const row = S.byFips.get(node.dataset.fips), value = row ? row[layer.key] : null;
+    node.setAttribute('fill', value == null ? '#0f2231' : rampColor(stops, (value - lo) / ((hi - lo) || 1)));
+    node.classList.toggle('trig', S.triggered.has(node.dataset.fips));
+    node.classList.toggle('sel', S.selected === node.dataset.fips);
+    const title = node.querySelector('title');
+    if (title && row) {
+      title.textContent = `${row.county_name}, ${row.state} — ${layerLabel(layer)}: ${fmt(value, layer.fmt)}`;
+    }
+  });
+  drawLegend(layer, lo, hi, stops); updateScaleBar();
 }
 
 // Intensity tier for one track point, keyed off its max sustained wind
@@ -734,7 +808,7 @@ function wireRatio() {
   input.addEventListener('input', async () => {
     S.ratio = Math.pow(10, +input.value);
     $('ratio-val').textContent = S.ratio.toFixed(S.ratio < .1 ? 3 : 2);
-    await refreshTriggered(); drawKpis(); drawMap(); drawCurve();
+    await refreshTriggered(); drawKpis(); updateCountyLayer(); drawCurve();
   });
 }
 async function refreshTriggered() {
@@ -944,7 +1018,7 @@ async function openDrawer(fips) {
   $('d-stats').innerHTML = stat('Expected out', num(row.expected_customers_out)) + stat('P90 out', num(row.p90_customers_out)) + stat('Expected fraction', fmt(row.expected_outage_fraction, 'pct')) + stat('P(>5%)', fmt(row.prob_outage_fraction_gt_05, 'pct')) + stat('Weather spread', fmt(row.weather_spread_pp, 'pp')) + stat('Impact spread', fmt(row.impact_spread_pp, 'pp')) + stat('Peak gust', fmt(row.peak_gust_ms, 'ms')) + stat('Envelope', row.training_envelope_flag, extrapolated);
   drawCdf(row);
   $('d-drivers').innerHTML = [['Damaging-wind hours', row.duration_hr != null ? Number(row.duration_hr).toFixed(1) : '—'], ['Hazard reference quality', row.hazard_reference_quality], ['Data quality', row.data_quality_flag], ['Product confidence', row.product_confidence]].map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value ?? '—')}</dd>`).join('');
-  $('drawer').dataset.row = JSON.stringify(row); $('drawer').hidden = false; drawMap();
+  $('drawer').dataset.row = JSON.stringify(row); $('drawer').hidden = false; updateCountyLayer();
 }
 function stat(label, value, warn = false) { return `<div class="stat${warn ? ' warn' : ''}"><b>${esc(value ?? '—')}</b><small>${esc(label)}</small></div>`; }
 function drawCdf(row) {
@@ -959,6 +1033,6 @@ function drawCdf(row) {
   $('d-cdfnote').textContent = 'Full predictive quantiles let each user apply their own operational threshold rather than relying on one headline probability.';
 }
 function drawCdfIfOpen() { if (!$('drawer').hidden && $('drawer').dataset.row) drawCdf(JSON.parse($('drawer').dataset.row)); }
-function closeDrawer() { $('drawer').hidden = true; S.selected = null; drawMap(); }
+function closeDrawer() { $('drawer').hidden = true; S.selected = null; updateCountyLayer(); }
 
 boot().catch((error) => { $('event-name').textContent = `Dashboard failed to load: ${error.message}`; console.error(error); });
