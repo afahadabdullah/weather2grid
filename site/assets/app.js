@@ -173,12 +173,41 @@ async function loadCycle(index) {
   else if (S.selected) closeDrawer();
 }
 
+function formatCycleTime(issuedStr) {
+  const date = new Date(issuedStr);
+  if (Number.isNaN(+date)) return issuedStr;
+  const utcHours = String(date.getUTCHours()).padStart(2, '0');
+  const utcMins = String(date.getUTCMinutes()).padStart(2, '0');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const utcDate = `${months[date.getUTCMonth()]} ${date.getUTCDate()}, ${utcHours}:${utcMins} UTC`;
+  const localTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+  return `${utcDate} (${localTime})`;
+}
+
+function formatCycleLead(cycle) {
+  const meta = cycle.meta || {};
+  const lead = cycle.lead_hours;
+  let horizonText = '';
+  if (meta.valid_start_utc && meta.valid_end_utc) {
+    const start = new Date(meta.valid_start_utc);
+    const end = new Date(meta.valid_end_utc);
+    const spanHrs = Math.round((end - start) / 36e5);
+    if (spanHrs > 0) horizonText = ` · ${spanHrs}h window`;
+  }
+  return lead != null ? `Lead +${lead}h${horizonText}` : '';
+}
+
 function updateCycleChrome() {
   const cycle = S.cycle, issued = new Date(cycle.issued_utc);
   $('event-name').textContent = cycle.event_name || cycle.event_id;
-  $('cycle-time').textContent = Number.isNaN(+issued) ? cycle.issued_utc : issued.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+  $('cycle-time').textContent = formatCycleTime(cycle.issued_utc);
   $('cycle-counter').textContent = `Cycle ${S.idx + 1} of ${S.cycles.length}`;
-  $('cycle-lead').textContent = cycle.lead_hours != null ? `Lead +${cycle.lead_hours}h` : '';
+  const leadEl = $('cycle-lead');
+  leadEl.textContent = formatCycleLead(cycle);
+  if (cycle.meta && cycle.meta.valid_start_utc && cycle.meta.valid_end_utc) {
+    leadEl.title = `Forecast valid from ${cycle.meta.valid_start_utc} to ${cycle.meta.valid_end_utc}`;
+    $('cycle-time').title = `Model initialization: ${cycle.issued_utc}`;
+  }
   const liveAgeHours = Number.isNaN(+issued) ? null : (Date.now() - issued.getTime()) / 36e5;
   const freshness = cycle.degraded_mode ? 'degraded' : liveAgeHours != null && liveAgeHours > 12 ? 'stale' : cycle.freshness;
   $('freshness').textContent = freshness; $('freshness').className = `pill ${freshness}`;
@@ -704,11 +733,21 @@ function drawSplit() {
 
 function drawProvenance() {
   const meta = S.cycle;
+  const m = meta.meta || {};
+  const validSpan = m.valid_start_utc && m.valid_end_utc
+    ? `${m.valid_start_utc.slice(5, 16).replace('T', ' ')}Z → ${m.valid_end_utc.slice(5, 16).replace('T', ' ')}Z`
+    : null;
+  const horizon = m.valid_start_utc && m.valid_end_utc
+    ? `${Math.round((new Date(m.valid_end_utc) - new Date(m.valid_start_utc)) / 36e5)}h`
+    : null;
   const rows = [
     ['Artifact', meta.model_artifact_id], ['Hazard', meta.hazard_source],
-    ['Provider', meta.meta.forecast_provider || meta.provider_status], ['Training cutoff', (meta.training_data_cutoff_utc || '').slice(0, 10)],
+    ['Provider', m.forecast_provider || meta.provider_status],
+    ['Lead / Window', meta.lead_hours != null ? `+${meta.lead_hours}h lead (${horizon || '—'} window)` : '—'],
+    ['Valid period', validSpan || '—'],
+    ['Training cutoff', (meta.training_data_cutoff_utc || '').slice(0, 10)],
     ['Release gate', meta.release_gate_passed ? 'passed' : 'NOT PASSED'], ['Synthetic', meta.synthetic ? 'YES' : 'no'],
-    ['Schema', meta.meta.schema_version || '—'], ['Geography', meta.meta.geography_version || '—'],
+    ['Schema', m.schema_version || '—'], ['Geography', m.geography_version || '—'],
   ];
   $('prov').innerHTML = rows.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value ?? '—')}</dd>`).join('');
 }
