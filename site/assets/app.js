@@ -388,6 +388,46 @@ function drawMap() {
   $('map-domain').textContent = `${S.view.toUpperCase()} extent · ${states.join(' + ')} footprint · ${S.counties.length} counties`;
 }
 
+// Intensity tier for one track point, keyed off its max sustained wind
+// (kt) - drives marker color/size everywhere in the storm overlay so a
+// glance at dot color or ring color tells you category, the same way an
+// NHC track map does, without needing to hover every point.
+function stormTier(vmaxKt) {
+  if (vmaxKt == null) return { cat: null, color: '#8ba0ac', label: 'Unknown intensity' };
+  if (vmaxKt < 34) return { cat: null, color: '#3fd4e5', label: 'Tropical depression' };
+  if (vmaxKt < 64) return { cat: null, color: '#4fd1a1', label: 'Tropical storm' };
+  const cat = stormCategory(vmaxKt);
+  const color = { 1: '#ffb44c', 2: '#ff774d', 3: '#ff626d', 4: '#ff4f8a', 5: '#9a8cff' }[cat] || '#ff626d';
+  return { cat, color, label: `Category ${cat}` };
+}
+
+// A compact three-bladed pinwheel (curved wedge x3, spun 120° apart) around
+// a dark "eye" - reads as a storm symbol at a glance instead of a plain
+// dot, and its color still carries the intensity tier like every other
+// marker here. cx/cy/r are in screen pixels; title is the hover tooltip.
+function stormGlyph(cx, cy, r, color, title) {
+  const blade = (rot) => {
+    const a0 = -34 * Math.PI / 180, a1 = 34 * Math.PI / 180, ro = r, ri = r * 0.32;
+    const pt = (a, rad) => [(rad * Math.cos(a)).toFixed(2), (rad * Math.sin(a)).toFixed(2)];
+    const [x0, y0] = pt(a0, ro), [x1, y1] = pt(a1, ro), [x2, y2] = pt(a1, ri), [x3, y3] = pt(a0, ri);
+    return `<path d="M${x0} ${y0} A${ro.toFixed(2)} ${ro.toFixed(2)} 0 0 1 ${x1} ${y1} L${x2} ${y2} A${ri.toFixed(2)} ${ri.toFixed(2)} 0 0 0 ${x3} ${y3} Z" fill="${color}" transform="rotate(${rot})"/>`;
+  };
+  return `<g class="storm-glyph" transform="translate(${cx.toFixed(1)} ${cy.toFixed(1)})">` +
+    `<title>${title}</title>` + [0, 120, 240].map(blade).join('') +
+    `<circle r="${(r * 0.28).toFixed(2)}" fill="#071018" stroke="${color}" stroke-width="1.2"/></g>`;
+}
+
+// Color/dash per wind-radius tier, plus the compass angle its on-map label
+// sits at (measured from the positive x-axis, screen y-down). The angles
+// sit in the upper-left quadrant, well clear of the upper-right quadrant
+// where each point's own "NOW"/"+Nh" label is drawn, so the two never
+// collide, and are staggered from each other so the three read as a stack.
+const WIND_TIER_STYLE = {
+  '34kt': { color: '#3fd4e5', fill: 'rgba(63,212,229,.09)', dash: '2 3', angle: -160 },
+  '50kt': { color: '#ffb44c', fill: 'rgba(255,180,76,.10)', dash: '6 3', angle: -135 },
+  '64kt': { color: '#ff626d', fill: 'rgba(255,98,109,.12)', dash: 'none', angle: -110 },
+};
+
 function drawStormOverlay(track, storm, screen, scale) {
   const points = track.map((point) => ({ ...point, xy: screen(point.lon, point.lat) }));
   const past = points.filter((point) => point.lead_hours <= 0);
@@ -408,11 +448,20 @@ function drawStormOverlay(track, storm, screen, scale) {
     if (past.length > 1) out += `<path class="storm-track-past" d="${past.map((p, i) => `${i ? 'L' : 'M'}${p.xy[0].toFixed(1)} ${p.xy[1].toFixed(1)}`).join('')}"/>`;
     out += `<path class="storm-track" d="${future.map((p, i) => `${i ? 'L' : 'M'}${p.xy[0].toFixed(1)} ${p.xy[1].toFixed(1)}`).join('')}"/>`;
   }
-  if (S.overlays.wind) {
-    const current = points.find((p) => p.lead_hours === 0) || points[0];
+  const current = points.find((p) => p.lead_hours === 0) || points[0];
+  if (S.overlays.wind && current) {
     const radii = storm.wind_radii_km || {};
+    // Largest radius (34kt) drawn first, smallest (64kt) last, so each
+    // tier's own color shows as the annulus outside the next tier in -
+    // one glance reads how wind speed ramps up toward the center, instead
+    // of three same-colored circles that only differed by radius before.
     [['34kt', radii['34kt']], ['50kt', radii['50kt']], ['64kt', radii['64kt']]].forEach(([label, km]) => {
-      if (km) out += `<circle class="wind-radius" cx="${current.xy[0]}" cy="${current.xy[1]}" r="${Math.max(4, km / 6371 * scale)}"><title>${esc(label)} wind radius · ${km} km</title></circle>`;
+      if (!km) return;
+      const style = WIND_TIER_STYLE[label], r = Math.max(4, km / 6371 * scale);
+      out += `<circle class="wind-radius" style="fill:${style.fill};stroke:${style.color}" stroke-dasharray="${style.dash}" cx="${current.xy[0].toFixed(1)}" cy="${current.xy[1].toFixed(1)}" r="${r.toFixed(1)}"><title>${esc(label)} wind radius · ${km.toFixed(0)} km</title></circle>`;
+      const rad = style.angle * Math.PI / 180;
+      const lx = current.xy[0] + r * Math.cos(rad), ly = current.xy[1] + r * Math.sin(rad);
+      out += `<text class="wind-radius-label" style="fill:${style.color}" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}">${esc(label)}</text>`;
     });
   }
   if (S.overlays.track) points.forEach((point, i) => {
@@ -420,8 +469,28 @@ function drawStormOverlay(track, storm, screen, scale) {
     if (!isCurrent && point.lead_hours > 0 && point.lead_hours % 12 !== 0 && i !== points.length - 1) return;
     const label = isCurrent ? 'NOW' : point.lead_hours > 0
       ? `+${point.lead_hours}h` : `${Math.abs(point.lead_hours)}h ago`;
-    const pastClass = point.lead_hours < 0 ? ' past' : '';
-    out += `<circle class="track-point${isCurrent ? ' current' : ''}${pastClass}" cx="${point.xy[0]}" cy="${point.xy[1]}" r="${isCurrent ? 5.2 : 3.7}"><title>${esc(label)} · ${fmt(point.max_wind_ms, 'ms')} · ${point.pressure_hpa || '—'} hPa</title></circle>${point.lead_hours >= 0 ? `<text class="track-label" x="${point.xy[0] + 7}" y="${point.xy[1] - 7}">${esc(label)}</text>` : ''}`;
+    const isPast = point.lead_hours < 0;
+    const tier = stormTier(point.raw && point.raw.vmax_kt != null ? point.raw.vmax_kt : null);
+    const tooltip = `${esc(label)} · ${esc(tier.label)} · ${fmt(point.max_wind_ms, 'ms')} · ${point.pressure_hpa || '—'} hPa`;
+    if (isCurrent) {
+      // A short heading arrow, pointed from the current fix toward the
+      // next forecast point, so the storm's motion is visible without
+      // reading the track line's slope - screen-space delta, not
+      // geographic bearing, so it always agrees with the drawn track.
+      const next = future[1];
+      if (next) {
+        const dx = next.xy[0] - point.xy[0], dy = next.xy[1] - point.xy[1];
+        const heading = Math.atan2(dx, -dy) * 180 / Math.PI, tip = 15, base = 6;
+        out += `<g class="storm-heading" style="fill:${tier.color}" transform="translate(${point.xy[0].toFixed(1)} ${point.xy[1].toFixed(1)}) rotate(${heading.toFixed(1)})" pointer-events="none"><path d="M0 -${tip} L5 -${base} L-5 -${base} Z"/></g>`;
+      }
+      out += `<circle class="storm-halo" style="fill:${tier.color}" cx="${point.xy[0].toFixed(1)}" cy="${point.xy[1].toFixed(1)}" r="15" pointer-events="none"/>`;
+      out += stormGlyph(point.xy[0], point.xy[1], 10, tier.color, tooltip);
+    } else {
+      const r = isPast ? 3.2 : 3.6 + (tier.cat || 0) * 0.9;
+      const fill = isPast ? '#64808f' : tier.color;
+      out += `<circle class="track-point${isPast ? ' past' : ''}" style="fill:${fill}" cx="${point.xy[0].toFixed(1)}" cy="${point.xy[1].toFixed(1)}" r="${r.toFixed(1)}"><title>${tooltip}</title></circle>`;
+    }
+    if (point.lead_hours >= 0) out += `<text class="track-label" x="${(point.xy[0] + 10).toFixed(1)}" y="${(point.xy[1] - 9).toFixed(1)}">${esc(label)}</text>`;
   });
   return out;
 }
