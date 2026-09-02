@@ -26,6 +26,37 @@ const LAYERS = [
   { key: 'weather_spread_pp', label: 'Weather spread', fmt: 'pp', ramp: 'uncertainty' },
 ];
 
+// Forecast sources this dashboard knows how to name. The stack in the rail is
+// built from the cycles actually present in data/cycles.json (keyed off each
+// cycle's hazard_source), never from a hardcoded list - a hardcoded list goes
+// stale the moment an adapter ships, which is exactly how "WeatherNext 2 -
+// adapter planned" ended up sitting above three live WeatherNext 2 cycles.
+const PROVIDERS = [
+  { id: 'hrrr', label: 'NOAA HRRR via AWS Open Data', match: (s) => s.startsWith('hrrr') },
+  { id: 'weathernext2', label: 'Google DeepMind WeatherNext 2', match: (s) => s.startsWith('weathernext') },
+  { id: 'gfs', label: 'NOAA GFS / GEFS', match: (s) => s.startsWith('gfs') || s.startsWith('gefs') },
+];
+
+function providerFor(hazardSource) {
+  const source = String(hazardSource || '').toLowerCase();
+  const known = PROVIDERS.find((provider) => provider.match(source));
+  if (known) return known;
+  // An unrecognised source is still shown, under its own raw name, rather
+  // than being silently dropped out of the stack.
+  return { id: `other:${source}`, label: source || 'unknown source', match: () => false };
+}
+
+// WeatherNext 2 publishes 100 m sustained wind, which the adapter carries in
+// the product's peak_gust_ms column as an explicitly unvalidated gust proxy.
+// Calling that "peak gust" in the UI would overstate it, so the wind label
+// follows the cycle's own hazard_source.
+function windLabel(short) {
+  const source = String((S.cycle && S.cycle.meta && S.cycle.meta.hazard_source) || '');
+  if (!source.includes('proxy')) return short ? 'Peak gust' : 'Peak modeled gust';
+  return short ? '100 m wind*' : 'Peak 100 m wind (gust proxy)';
+}
+function layerLabel(layer) { return layer.key === 'peak_gust_ms' ? windLabel(true) : layer.label; }
+
 const RAMPS = {
   impact: ['#183344', '#73584f', '#dc6f48', '#ffd18b'],
   prob: ['#172e43', '#3d4d91', '#8a69d6', '#e3c6ff'],
@@ -133,8 +164,8 @@ async function loadCycle(index) {
   S.track = track && track.available !== false ? track : null; S.curve = null;
   S.byFips = new Map(counties.map((row) => [String(row.county_fips), row]));
   $('cycle').value = String(i);
-  updateCycleChrome();
-  drawProvenance(); drawSplit(); drawPriority(); drawForecast(); drawTail();
+  updateCycleChrome(); buildLayers();
+  drawProvenance(); drawSplit(); drawPriority(); drawForecast(); drawSourceStack(); drawTail();
   await refreshTriggered();
   if (token !== S.loadToken) return;
   drawKpis(); drawMap(); await drawCurve();
@@ -154,7 +185,9 @@ function updateCycleChrome() {
   $('source-badge').textContent = `${cycle.meta.forecast_provider || 'unknown'} · ${S.counties.length} counties`;
   [...$('cycle-dots').children].forEach((dot, i) => dot.classList.toggle('active', i === S.idx));
   document.querySelectorAll('[data-overlay="track"],[data-overlay="wind"],[data-view="storm"]').forEach((button) => {
-    button.disabled = !S.track; button.title = S.track ? '' : 'No cyclone track in this product';
+    button.disabled = !S.track;
+    button.title = S.track ? ''
+      : 'No cyclone track in this product. Area wind outlooks carry a county wind field instead \u2014 see the wind map layer.';
   });
   const hasBasemap = Boolean(S.basemap && S.basemap.features && S.basemap.features.length);
   document.querySelectorAll('[data-overlay="states"],[data-view="conus"]').forEach((button) => {
@@ -186,7 +219,8 @@ function buildLayers() {
   const host = $('layers'); host.innerHTML = '';
   LAYERS.forEach((layer) => {
     const button = document.createElement('button');
-    button.type = 'button'; button.textContent = layer.label; button.setAttribute('role', 'tab');
+    button.type = 'button'; button.textContent = layerLabel(layer); button.setAttribute('role', 'tab');
+    if (layer.key === 'peak_gust_ms') button.title = windLabel(false);
     button.setAttribute('aria-selected', String(layer.key === S.layer));
     button.addEventListener('click', () => {
       S.layer = layer.key;
@@ -365,7 +399,7 @@ function drawMap() {
     const classes = ['county'];
     if (S.triggered.has(path.id)) classes.push('trig');
     if (S.selected === path.id) classes.push('sel');
-    const title = row ? `${row.county_name}, ${row.state} — ${layer.label}: ${fmt(value, layer.fmt)}` : path.id;
+    const title = row ? `${row.county_name}, ${row.state} — ${layerLabel(layer)}: ${fmt(value, layer.fmt)}` : path.id;
     out += `<path class="${classes.join(' ')}" d="${path.d}" fill="${fill}" vector-effect="non-scaling-stroke" data-fips="${esc(path.id)}" tabindex="0"><title>${esc(title)}</title></path>`;
     if (S.overlays.extrapolation && row && row.training_envelope_flag !== 'inside') hatchParts.push(path.d);
   }
@@ -505,7 +539,7 @@ function drawStormOverlay(track, storm, screen, scale) {
 }
 
 function drawLegend(layer, lo, hi, stops) {
-  $('legend').innerHTML = `<div class="lt">${esc(layer.label)}</div><div class="ramp" style="background:linear-gradient(90deg,${stops.join(',')})"></div><div class="ends"><span>${fmt(lo, layer.fmt)}</span><span>${fmt(hi, layer.fmt)}</span></div><div class="scale-bar"><i id="scale-line"></i><span id="scale-label">—</span></div>`;
+  $('legend').innerHTML = `<div class="lt">${esc(layerLabel(layer))}</div><div class="ramp" style="background:linear-gradient(90deg,${stops.join(',')})"></div><div class="ends"><span>${fmt(lo, layer.fmt)}</span><span>${fmt(hi, layer.fmt)}</span></div><div class="scale-bar"><i id="scale-line"></i><span id="scale-label">—</span></div>`;
 }
 function updateScaleBar() {
   const line = $('scale-line'), label = $('scale-label');
@@ -561,8 +595,60 @@ function drawKpis() {
   $('kpi-triggered-note').textContent = `counties above C/L ${S.ratio.toFixed(2)}`;
   const gust = Math.max(...S.counties.map((row) => row.peak_gust_ms || 0));
   $('kpi-gust').textContent = gust ? `${gust.toFixed(0)} m/s` : '—';
+  $('kpi-gust-label').textContent = windLabel(false);
   const states = [...new Set(S.counties.map((row) => row.state))].sort();
   $('kpi-domain').textContent = `${states.join(' + ')} · ${S.counties.length} counties`;
+}
+
+// One row per forecast source, built from the cycles actually in the archive.
+// A source with cycles is a button that jumps to its newest initialisation at
+// the shortest lead; a source with none is disabled and says so plainly,
+// rather than claiming a roadmap this page cannot verify.
+function drawSourceStack() {
+  const host = $('source-stack');
+  if (!host) return;
+  const groups = new Map();
+  S.cycles.forEach((summary, index) => {
+    const provider = providerFor(summary.hazard_source);
+    if (!groups.has(provider.id)) groups.set(provider.id, { label: provider.label, indices: [] });
+    groups.get(provider.id).indices.push(index);
+  });
+  const activeId = providerFor((S.cycles[S.idx] || {}).hazard_source).id;
+  const ids = [...new Set([...PROVIDERS.map((p) => p.id), ...groups.keys()])];
+  host.replaceChildren(...ids.map((id) => {
+    const group = groups.get(id);
+    const known = PROVIDERS.find((provider) => provider.id === id);
+    const label = group ? group.label : known ? known.label : id;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `source-row${!group ? ' planned' : id === activeId ? ' active' : ''}`;
+    const name = document.createElement('span');
+    name.append(document.createElement('i'));
+    const bold = document.createElement('b');
+    bold.textContent = label;
+    name.append(bold);
+    const state = document.createElement('em');
+    if (!group) {
+      state.textContent = 'not in archive';
+      row.disabled = true;
+      row.title = `${label} has no cycles in this archive.`;
+    } else {
+      const count = group.indices.length;
+      state.textContent = id === activeId ? 'active' : `${count} cycle${count === 1 ? '' : 's'}`;
+      // Newest initialisation first, then the shortest lead within it: the
+      // cycle a reader most likely means when they click a source name.
+      const target = group.indices.slice().sort((a, b) => {
+        const A = S.cycles[a], B = S.cycles[b];
+        const ta = Date.parse(A.issued_utc) || 0, tb = Date.parse(B.issued_utc) || 0;
+        return ta === tb ? (A.lead_hours || 0) - (B.lead_hours || 0) : tb - ta;
+      })[0];
+      row.title = `Show ${label} · ${count} cycle${count === 1 ? '' : 's'} in this archive`;
+      row.setAttribute('aria-pressed', String(id === activeId));
+      row.addEventListener('click', () => { stopPlayback(); loadCycle(target); });
+    }
+    row.append(name, state);
+    return row;
+  }));
 }
 
 function drawForecast() {
@@ -571,9 +657,17 @@ function drawForecast() {
   $('provider-status').textContent = S.cycle.degraded_mode ? 'degraded' : (S.cycle.provider_status || 'ok');
   $('provider-status').className = `source-status${S.cycle.degraded_mode ? ' degraded' : ''}`;
   if (!storm) {
-    $('storm-class').textContent = meta.event_type === 'tropical_cyclone' ? 'Cyclone metadata pending' : 'No storm track supplied';
+    $('storm-class').textContent = meta.event_type === 'tropical_cyclone' ? 'Cyclone metadata pending' : 'Area wind outlook · no cyclone track';
     $('storm-name').textContent = S.cycle.event_name;
-    $('storm-stats').innerHTML = '<div><b>—</b><span>Center</span></div><div><b>—</b><span>Intensity</span></div>';
+    // No track means no center, no category and no wind radii - but the
+    // product still carries a county wind field, so show that here instead
+    // of two em-dashes that read like the panel failed to load.
+    const gusts = S.counties.map((row) => row.peak_gust_ms || 0);
+    const peak = gusts.length ? Math.max(...gusts) : 0;
+    const galeCount = gusts.filter((value) => value >= 17.5).length;
+    $('storm-stats').innerHTML =
+      `<div><b>${peak ? `${peak.toFixed(0)} m/s` : '—'}</b><span>${esc(windLabel(false))}</span></div>` +
+      `<div><b>${integer.format(galeCount)}</b><span>Counties ≥ 34 kt</span></div>`;
     $('storm-chip').hidden = true; return;
   }
   $('storm-class').textContent = `${storm.classification || 'Tropical cyclone'}${storm.category != null ? ` · Category ${storm.category}` : ''}`;

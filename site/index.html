@@ -58,7 +58,7 @@
     <article class="kpi"><div class="kpi-label"><span class="kpi-icon cyan">∿</span>Regional expected</div><strong id="kpi-expected">—</strong><span id="kpi-expected-note">customers without power</span></article>
     <article class="kpi"><div class="kpi-label"><span class="kpi-icon violet">↗</span>Regional P90</div><strong id="kpi-p90">—</strong><span>shared-event tail scenario</span></article>
     <article class="kpi"><div class="kpi-label"><span class="kpi-icon amber">◎</span>Decision threshold</div><strong id="kpi-triggered">—</strong><span id="kpi-triggered-note">counties above your threshold</span></article>
-    <article class="kpi"><div class="kpi-label"><span class="kpi-icon red">◉</span>Peak modeled gust</div><strong id="kpi-gust">—</strong><span id="kpi-domain">forecast domain</span></article>
+    <article class="kpi"><div class="kpi-label"><span class="kpi-icon red">◉</span><span id="kpi-gust-label">Peak modeled gust</span></div><strong id="kpi-gust">—</strong><span id="kpi-domain">forecast domain</span></article>
   </section>
 
   <section class="primary-grid">
@@ -113,11 +113,8 @@
         <div class="forecast-body">
           <div class="storm-identity"><div class="storm-symbol" aria-hidden="true">◉</div><div><strong id="storm-class">No track supplied</strong><span id="storm-name">—</span></div></div>
           <div class="storm-stats" id="storm-stats"></div>
-          <div class="source-stack">
-            <div class="source-row active"><span><i></i><b id="active-source">Current product</b></span><em>active</em></div>
-            <div class="source-row planned"><span><i></i><b>WeatherNext 2</b></span><em>adapter planned</em></div>
-            <div class="source-row planned"><span><i></i><b>GFS / GEFS</b></span><em>adapter planned</em></div>
-          </div>
+          <div class="active-source-line"><b id="active-source">Current product</b></div>
+          <div class="source-stack" id="source-stack" role="group" aria-label="Forecast sources in this archive"></div>
         </div>
       </section>
 
