@@ -144,7 +144,12 @@ function showBanner(banner) {
 }
 
 function buildCycleDots() {
-  $('cycle-dots').innerHTML = S.cycles.map((_, i) => `<i class="${i === S.idx ? 'active' : ''}"></i>`).join('');
+  $('cycle-dots').innerHTML = S.cycles.map((c, i) => {
+    const prov = providerFor(c.hazard_source);
+    const short = prov.id === 'hrrr' ? 'HRRR' : prov.id === 'weathernext2' ? 'WN2' : 'Cycle';
+    const desc = `${short}: ${c.event_name || c.cycle_id} (Lead +${c.lead_hours || 0}h)`;
+    return `<i class="${i === S.idx ? 'active' : ''}" title="${esc(desc)}"></i>`;
+  }).join('');
 }
 
 async function loadCycle(index) {
@@ -199,9 +204,11 @@ function formatCycleLead(cycle) {
 
 function updateCycleChrome() {
   const cycle = S.cycle, issued = new Date(cycle.issued_utc);
+  const prov = providerFor(cycle.meta ? cycle.meta.hazard_source : cycle.hazard_source);
+  const shortProv = prov.id === 'hrrr' ? 'NOAA HRRR' : prov.id === 'weathernext2' ? 'WeatherNext 2' : 'Forecast';
   $('event-name').textContent = cycle.event_name || cycle.event_id;
   $('cycle-time').textContent = formatCycleTime(cycle.issued_utc);
-  $('cycle-counter').textContent = `Cycle ${S.idx + 1} of ${S.cycles.length}`;
+  $('cycle-counter').textContent = `${shortProv} · ${S.idx + 1} of ${S.cycles.length}`;
   const leadEl = $('cycle-lead');
   leadEl.textContent = formatCycleLead(cycle);
   if (cycle.meta && cycle.meta.valid_start_utc && cycle.meta.valid_end_utc) {
