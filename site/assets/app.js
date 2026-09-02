@@ -916,6 +916,12 @@ function drawMapCanvas() {
   updateScaleBar();
 }
 
+const WIND_TIER_STYLE = {
+  '34kt': { color: '#38bdf8', fill: 'rgba(56, 189, 248, 0.12)' },
+  '50kt': { color: '#fbbf24', fill: 'rgba(251, 191, 36, 0.14)' },
+  '64kt': { color: '#f87171', fill: 'rgba(248, 113, 113, 0.18)' },
+};
+
 function drawStormCanvas(ctx, zoom) {
   const storm = stormMeta();
   const officialStorms = S.nhcTracks.map((item) => stormMeta(item, null)).filter(Boolean)
@@ -1087,11 +1093,7 @@ function drawStormCanvas(ctx, zoom) {
   }
 }
 
-const WIND_TIER_STYLE = {
-  '34kt': { color: '#38bdf8', fill: 'rgba(56, 189, 248, 0.12)' },
-  '50kt': { color: '#fbbf24', fill: 'rgba(251, 191, 36, 0.14)' },
-  '64kt': { color: '#f87171', fill: 'rgba(248, 113, 113, 0.18)' },
-};
+
 
 function stormCategory(vmaxKt) {
   if (vmaxKt < 64) return null;
@@ -1378,8 +1380,7 @@ function wireExport() {
         `"${r.product_confidence || r.data_quality_flag || 'normal'}"`,
       ].join(','));
     }
-    const blob = new Blob([csvLines.join('
-')], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
