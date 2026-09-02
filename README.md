@@ -105,6 +105,13 @@ The exporter expects this StormGrid output layout:
     └── counties.geojson            optional cycle-specific geometry
 ```
 
+`nhc-active-tracks.json`, when present at the archive root, is a separate
+official NHC advisory overlay. It contains active ocean-storm forecast centers
+and asymmetric 34/50/64-kt wind swaths; it is not a county-outage forecast.
+The `Refresh NHC ocean-storm overlay` GitHub Action refreshes this one file
+every three hours and deploys the static site, so ocean tracks do not depend
+on the much shorter HRRR CONUS horizon.
+
 Weather2Grid writes compact browser-ready files under
 `site/data/cycles/<cycle_id>/`. County attributes use the static
 `w2g-columnar-v1` JSON layout (a column-name array plus row-value arrays), and

@@ -1,0 +1,6 @@
+{
+  "available": false,
+  "source": "NOAA NHC Tropical Weather Summary MapServer",
+  "reason": "The archive has not been refreshed with fetch-nhc-tracks.",
+  "tracks": []
+}

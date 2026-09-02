@@ -3,7 +3,7 @@
 
 const S = {
   cycles: [], idx: 0, cycle: null, counties: [], geo: null,
-  basemap: null, track: null,
+  basemap: null, track: null, nhcTracks: [], outageStatus: null,
   byFips: new Map(), layer: 'peak_gust_ms', ratio: 0.15,
   triggered: new Set(), selected: null, playing: false, timer: null,
   loadToken: 0, curve: null, trackFrame: null,
@@ -168,9 +168,14 @@ function decodeCountyData(payload) {
 async function boot() {
   const status = await cachedJson('data/status.json');
   showBanner(status.banner);
-  [S.cycles, S.basemap] = await Promise.all([
+  const [cycles, basemap, nhc, outageStatus] = await Promise.all([
     cachedJson('data/cycles.json'), cachedJson('data/basemap.geojson'),
+    cachedJson('data/nhc-active-tracks.json').catch(() => null),
+    cachedJson('data/live-outage-status.json').catch(() => null),
   ]);
+  S.cycles = cycles; S.basemap = basemap;
+  S.nhcTracks = nhc && nhc.available && Array.isArray(nhc.tracks) ? nhc.tracks : [];
+  S.outageStatus = outageStatus;
   if (!S.cycles.length) { $('event-name').textContent = 'No forecast products found'; return; }
   S.cycles.sort((a, b) => frameStartMs(a) - frameStartMs(b));
   const initialIndex = S.cycles.reduce((best, cycle, index) => {
@@ -512,15 +517,15 @@ function stormCategory(vmaxKt) {
   if (vmaxKt < 83) return 1; if (vmaxKt < 96) return 2;
   if (vmaxKt < 113) return 3; if (vmaxKt < 137) return 4; return 5;
 }
-function stormMeta() {
-  if (!S.track || !Array.isArray(S.track.points) || !S.track.points.length) return null;
+function stormMeta(trackSource = S.track, selectedFrame = S.trackFrame) {
+  if (!trackSource || !Array.isArray(trackSource.points) || !trackSource.points.length) return null;
   const currentIndex = Math.max(0, Math.min(
-    S.track.points.length - 1,
-    S.trackFrame == null ? Number(S.track.current_index || 0) : S.trackFrame,
+    trackSource.points.length - 1,
+    selectedFrame == null ? Number(trackSource.current_index || 0) : selectedFrame,
   ));
-  const current = S.track.points[currentIndex];
-  const coneByLead = S.track.cone_radius_nm_by_lead || {};
-  const points = S.track.points.map((point, i) => {
+  const current = trackSource.points[currentIndex];
+  const coneByLead = trackSource.cone_radius_nm_by_lead || {};
+  const points = trackSource.points.map((point, i) => {
     const lead = point.lead_hours != null ? point.lead_hours : (i - currentIndex) * 6;
     const coneNm = point.cone_radius_nm != null ? point.cone_radius_nm
       : coneByLead[String(lead)] != null ? coneByLead[String(lead)]
@@ -532,9 +537,9 @@ function stormMeta() {
       raw: point, selected: i === currentIndex,
     };
   });
-  const classification = S.track.classification || current.stage || '';
+  const classification = trackSource.classification || current.stage || '';
   const isCyclone = /tropical|cyclone|hurricane|typhoon|depression/i.test(classification)
-    || /nhc|atcf/i.test(String(S.track.source || ''));
+    || /nhc|atcf/i.test(String(trackSource.source || ''));
   return {
     classification,
     isCyclone,
@@ -542,7 +547,8 @@ function stormMeta() {
     center_lon: current.lon, max_wind_ms: current.vmax_kt * .514444,
     max_wind_kt: current.vmax_kt, min_pressure_hpa: current.pmin_mb,
     wind_radii_km: { '34kt': current.r34_nm * 1.852, '50kt': current.r50_nm * 1.852, '64kt': current.r64_nm * 1.852 },
-    currentIndex, track: points,
+    currentIndex, track: points, stormId: trackSource.storm_id || trackSource.name || '',
+    windRadiiGeojson: trackSource.wind_radii_geojson || null,
   };
 }
 
@@ -578,16 +584,20 @@ function drawMap() {
   if (!S.statesGeoProjected) S.statesGeoProjected = projectCollection(S.basemap, 'state');
   const countiesGeo = S.countiesGeoProjected, statesGeo = S.statesGeoProjected;
   const storm = stormMeta(), track = storm && Array.isArray(storm.track) ? storm.track : [];
+  const officialStorms = S.nhcTracks.map((item) => stormMeta(item, null)).filter(Boolean)
+    .filter((item) => !storm || item.stormId !== storm.stormId);
+  const visibleStorms = [...(storm ? [storm] : []), ...officialStorms];
+  const visibleTrack = visibleStorms.flatMap((item) => item.track);
   let bounds;
-  if (S.view === 'storm' && track.length) {
+  if (S.view === 'storm' && visibleTrack.length) {
     bounds = [Infinity, Infinity, -Infinity, -Infinity];
-    track.forEach((point) => {
+    visibleStorms.forEach((item) => item.track.forEach((point) => {
       const [x, y] = proj(point.lon, point.lat);
-      const windKm = Math.max(point.uncertainty_km || 0, (storm.wind_radii_km && storm.wind_radii_km['34kt']) || 150);
+      const windKm = Math.max(point.uncertainty_km || 0, (item.wind_radii_km && item.wind_radii_km['34kt']) || 150);
       const radius = (windKm + 180) / 6371;
       bounds[0] = Math.min(bounds[0], x - radius); bounds[1] = Math.min(bounds[1], y - radius);
       bounds[2] = Math.max(bounds[2], x + radius); bounds[3] = Math.max(bounds[3], y + radius);
-    });
+    }));
   } else if (S.view === 'conus' && statesGeo.paths.length) {
     bounds = [...statesGeo.bounds];
   } else {
@@ -638,7 +648,7 @@ function drawMap() {
     statesGeo.paths.forEach((path) => { out += `<path class="state-shape" d="${path.d}" vector-effect="non-scaling-stroke"><title>${esc(path.id)}</title></path>`; });
     out += '</g>';
   }
-  out += `<g id="storm-overlay">${track.length ? drawStormOverlay(track, storm, screen, scale) : ''}</g>`;
+  out += `<g id="storm-overlay">${visibleStorms.map((item) => drawStormOverlay(item.track, item, screen, scale)).join('')}</g>`;
   out += '</g>';
   svg.innerHTML = out;
   svg.querySelectorAll('.county').forEach((node) => {
@@ -649,13 +659,16 @@ function drawMap() {
   const states = [...new Set(S.counties.map((row) => row.state))].sort();
   const viewLabel = S.view === 'storm' ? 'Storm view' : S.view === 'conus' ? 'CONUS view' : 'Event view';
   $('map-domain').textContent = `${viewLabel} · ${integer.format(S.counties.length)} counties`;
-  $('map-domain').title = `${states.join(' + ')} county footprint${track.length ? ' with supplied storm track' : ''}`;
+  $('map-domain').title = `${states.join(' + ')} county footprint${track.length ? ' with supplied storm track' : ''}${officialStorms.length ? ` · ${officialStorms.length} official NHC ocean track${officialStorms.length === 1 ? '' : 's'}` : ''}`;
 }
 
 function redrawStormOnly() {
   const host = $('storm-overlay'), storm = stormMeta();
-  if (!host || !S.mapScreen || !storm) { drawMap(); return; }
-  host.innerHTML = drawStormOverlay(storm.track, storm, S.mapScreen, S.mapScale);
+  const officialStorms = S.nhcTracks.map((item) => stormMeta(item, null)).filter(Boolean)
+    .filter((item) => !storm || item.stormId !== storm.stormId);
+  const storms = [...(storm ? [storm] : []), ...officialStorms];
+  if (!host || !S.mapScreen || !storms.length) { drawMap(); return; }
+  host.innerHTML = storms.map((item) => drawStormOverlay(item.track, item, S.mapScreen, S.mapScale)).join('');
 }
 
 function updateCountyLayer() {
@@ -744,11 +757,31 @@ function drawStormOverlay(track, storm, screen, scale) {
   const current = points[selectedIndex] || points[0];
   if (S.overlays.wind && current) {
     const radii = storm.wind_radii_km || {};
+    const swaths = ((storm.windRadiiGeojson && storm.windRadiiGeojson.features) || [])
+      .filter((feature) => Number((feature.properties || {}).tau) === Number(current.lead_hours))
+      .sort((a, b) => Number((a.properties || {}).radii) - Number((b.properties || {}).radii));
+    // NHC supplies asymmetric polygons by quadrant.  When that source data
+    // exists, draw the official swath itself instead of pretending the wind
+    // field is a symmetric circle.  The scalar circles below are only the
+    // fallback for a track contract that has no polygons.
+    if (swaths.length) {
+      swaths.forEach((feature) => {
+        const properties = feature.properties || {}, threshold = `${properties.radii}kt`;
+        const style = WIND_TIER_STYLE[threshold] || WIND_TIER_STYLE['34kt'];
+        const geometry = feature.geometry || {};
+        const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates || [];
+        const path = polygons.map((polygon) => polygon.map((ring) => ring.map((coordinate, i) => {
+          const xy = screen(coordinate[0], coordinate[1]);
+          return `${i ? 'L' : 'M'}${xy[0].toFixed(1)} ${xy[1].toFixed(1)}`;
+        }).join(' ') + 'Z').join(' ')).join(' ');
+        out += `<path class="wind-radius" style="fill:${style.fill};stroke:${style.color}" stroke-dasharray="${style.dash}" d="${path}"><title>Official NHC ${esc(String(properties.radii))}-kt forecast wind swath</title></path>`;
+      });
+    }
     // Largest radius (34kt) drawn first, smallest (64kt) last, so each
     // tier's own color shows as the annulus outside the next tier in -
     // one glance reads how wind speed ramps up toward the center, instead
     // of three same-colored circles that only differed by radius before.
-    [['34kt', radii['34kt']], ['50kt', radii['50kt']], ['64kt', radii['64kt']]].forEach(([label, km]) => {
+    if (!swaths.length) [['34kt', radii['34kt']], ['50kt', radii['50kt']], ['64kt', radii['64kt']]].forEach(([label, km]) => {
       if (!km) return;
       const style = WIND_TIER_STYLE[label], r = Math.max(4, km / 6371 * scale);
       out += `<circle class="wind-radius" style="fill:${style.fill};stroke:${style.color}" stroke-dasharray="${style.dash}" cx="${current.xy[0].toFixed(1)}" cy="${current.xy[1].toFixed(1)}" r="${r.toFixed(1)}"><title>${esc(label)} wind radius · ${km.toFixed(0)} km</title></circle>`;
@@ -901,7 +934,7 @@ function drawSourceStack() {
   });
   const activeId = providerFor((S.cycles[S.idx] || {}).hazard_source).id;
   const ids = [...new Set([...PROVIDERS.map((p) => p.id), ...groups.keys()])];
-  host.replaceChildren(...ids.map((id) => {
+  const rows = ids.map((id) => {
     const group = groups.get(id);
     const known = PROVIDERS.find((provider) => provider.id === id);
     const label = group ? group.label : known ? known.label : id;
@@ -927,7 +960,29 @@ function drawSourceStack() {
     }
     row.append(name, state);
     return row;
-  }));
+  });
+  if (S.nhcTracks.length) {
+    const row = document.createElement('button');
+    row.type = 'button'; row.className = 'source-row active';
+    row.title = 'Show official NHC ocean-storm tracks and wind swaths.';
+    row.innerHTML = `<span><i></i><b>NOAA NHC ocean storms</b></span><em>${S.nhcTracks.length} active track${S.nhcTracks.length === 1 ? '' : 's'}</em>`;
+    row.addEventListener('click', () => {
+      S.view = 'storm';
+      document.querySelectorAll('[data-view]').forEach((button) => {
+        button.setAttribute('aria-pressed', String(button.dataset.view === 'storm'));
+      });
+      drawMap();
+    });
+    rows.push(row);
+  }
+  if (S.outageStatus && !S.outageStatus.available) {
+    const row = document.createElement('button');
+    row.type = 'button'; row.className = 'source-row planned'; row.disabled = true;
+    row.title = S.outageStatus.reason || 'Observed outages are unavailable.';
+    row.innerHTML = '<span><i></i><b>Observed outages</b></span><em>not configured</em>';
+    rows.push(row);
+  }
+  host.replaceChildren(...rows);
 }
 
 function drawForecast() {

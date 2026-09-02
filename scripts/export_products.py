@@ -351,6 +351,33 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
         },
     )
 
+    # Official active tropical-cyclone tracks are deliberately outside every
+    # StormGrid county-risk cycle: an NHC advisory is a forecaster-issued
+    # storm-map product, not a county-outage prediction.  Copy it as a
+    # separate static layer when the StormGrid NHC fetch command has refreshed
+    # the archive.  Keeping this publish-time avoids browser CORS/rate-limit
+    # failures and makes the displayed advisory timestamp auditable.
+    nhc_tracks = archive / "nhc-active-tracks.json"
+    if nhc_tracks.exists():
+        shutil.copyfile(nhc_tracks, staging / "nhc-active-tracks.json")
+    else:
+        write_json(staging / "nhc-active-tracks.json", {
+            "available": False,
+            "source": "NOAA NHC Tropical Weather Summary MapServer",
+            "reason": "The archive has not been refreshed with fetch-nhc-tracks.",
+            "tracks": [],
+        })
+
+    # PowerOutage.us credentials and licensing must stay behind a server-side
+    # integration.  A public GitHub Pages bundle must never contain an API
+    # key, nor claim observed outages when no licensed feed is configured.
+    write_json(staging / "live-outage-status.json", {
+        "available": False,
+        "provider": "PowerOutage.us",
+        "reason": "Live observed outage data is disabled until a licensed server-side API integration is configured.",
+        "forecast_data_remains_separate": True,
+    })
+
     # basemap.geojson is static site chrome (coastlines/state outlines) that
     # a StormGrid product archive has never been responsible for producing -
     # nothing in stormgrid writes one. Only fall back to an empty
