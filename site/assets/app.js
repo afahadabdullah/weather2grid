@@ -664,12 +664,11 @@ function updateCycleChrome() {
     // quoting the span here and the window in the overlap clause would put
     // two different numbers for the same thing in one sentence.
     const coveredHrs = windowHrs || spanHrs || 18;
-    const overlapNote = overlaps && windowHrs && stepHrs
-      ? ` Frames advance ${stepHrs}h, so consecutive windows overlap by ${windowHrs - stepHrs}h — successive views of one forecast, not separate events.`
-      : '';
     note.textContent = trackPoint
-      ? `Moves through ${frames.length} track fixes. County risk field represents +${cycle.forecast_horizon_hours || 18}h aggregate.`
-      : `Window ${position + 1} of ${frames.length}: ${coveredHrs}h cumulative outage risk synthesized from ${inputCount || '4'} weather model leads.${overlapNote}`;
+      ? `Track fix ${position + 1} of ${frames.length}`
+      : overlaps && windowHrs && stepHrs
+        ? `${windowHrs}h rolling window (+${stepHrs}h step, ${windowHrs - stepHrs}h overlap)`
+        : `${coveredHrs}h cumulative risk`;
   }
 
   const liveAgeHours = Number.isNaN(+issued) ? null : (Date.now() - issued.getTime()) / 36e5;
