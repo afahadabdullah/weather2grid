@@ -13,6 +13,9 @@ const S = {
   triggered: new Set(), selected: null, hoveredFips: null,
   playing: false, timer: null, loadToken: 0, curve: null, trackFrame: null,
   activeProvider: null,
+  // null means "follow the newest initialization". Set to an ISO issue
+  // time to pin the view to an archived run.
+  selectedInit: null,
   overlays: { states: true, track: true, wind: true, extrapolation: false, threshold: true },
   view: 'event', zoom: 1, panX: 0, panY: 0, dragging: null,
   mapScale: 1, mapBounds: null, mapOrigin: { ox: 0, oy: 0, x0: 0, y0: 0 },
@@ -30,10 +33,24 @@ const LAYERS = [
   { key: 'weather_spread_pp', label: 'Weather spread', fmt: 'pp', ramp: 'uncertainty' },
 ];
 
+// Only meaningful for a hindcast: a forecast cycle has no outcome yet. They
+// are appended to the layer switch when the active cycle carries observations
+// and removed again when it does not, so a forecast can never display an
+// "observed" layer built from stale data.
+const VERIFICATION_LAYERS = [
+  { key: 'observed_customers_out', label: 'Observed out', fmt: 'int', ramp: 'impact', verification: true },
+  { key: 'observed_outage_fraction', label: 'Observed fraction', fmt: 'pct', ramp: 'impact', fixed: [0, .35], verification: true },
+  { key: 'residual_outage_fraction', label: 'Error (pred − obs)', fmt: 'pct', ramp: 'uncertainty', verification: true },
+];
+
 const PROVIDERS = [
   { id: 'hrrr', label: 'NOAA HRRR via AWS Open Data', match: (s) => s.startsWith('hrrr') },
   { id: 'weathernext2', label: 'Google DeepMind WeatherNext 2', match: (s) => s.startsWith('weathernext') },
   { id: 'gfs', label: 'NOAA GFS / GEFS', match: (s) => s.startsWith('gfs') || s.startsWith('gefs') },
+  // Hindcasts are their own source, not a variant of a forecast provider.
+  // Keeping them separate is what stops a verification run appearing in a
+  // forecast provider's initialization list.
+  { id: 'hindcast', label: 'Hindcast verification', match: (s) => s.startsWith('hindcast') },
 ];
 
 function providerFor(hazardSource) {
@@ -49,26 +66,124 @@ function frameStartMs(cycle) {
   return issued + Number(cycle.lead_hours || 0) * 36e5;
 }
 
+// Every initialization this provider has in the archive, newest first.
+function providerInitializations(providerId = S.activeProvider) {
+  const grouped = new Map();
+  S.cycles.forEach((cycle) => {
+    if (providerFor(cycle.hazard_source).id !== providerId) return;
+    const issued = cycle.issued_utc;
+    const entry = grouped.get(issued) || {
+      issued,
+      time: Date.parse(issued) || 0,
+      kind: String(cycle.product_kind || 'forecast'),
+      eventName: cycle.event_name || '',
+      cycles: 0,
+      // The exporter marks exactly one initialization per hazard source as
+      // latest. Trusting that flag rather than re-deriving "newest" here keeps
+      // one definition of current in the whole system.
+      isLatest: Boolean(cycle.is_latest_initialization),
+      horizonHours: 0,
+    };
+    entry.cycles += 1;
+    entry.isLatest = entry.isLatest || Boolean(cycle.is_latest_initialization);
+    const horizon = Number(cycle.forecast_horizon_hours);
+    if (Number.isFinite(horizon)) entry.horizonHours = Math.max(entry.horizonHours, horizon);
+    grouped.set(issued, entry);
+  });
+  const list = [...grouped.values()].sort((a, b) => b.time - a.time);
+  // An archive with no flag at all (an export from before retention existed)
+  // still has to name something as current, or nothing would ever render.
+  // Hindcasts are excluded: they are never the current run of anything, and
+  // marking one latest is exactly the confusion this whole path avoids.
+  const forecasts = list.filter((entry) => entry.kind !== 'hindcast');
+  if (forecasts.length && !forecasts.some((entry) => entry.isLatest)) {
+    forecasts[0].isLatest = true;
+  }
+  return list;
+}
+
+// The initialization currently on screen for this provider: the pinned one if
+// it exists here, otherwise the latest.
+function activeInitialization(providerId = S.activeProvider) {
+  const list = providerInitializations(providerId);
+  if (!list.length) return null;
+  return list.find((entry) => entry.issued === S.selectedInit)
+    || list.find((entry) => entry.isLatest)
+    || list[0];
+}
+
+function viewingHindcast(providerId = S.activeProvider) {
+  const active = activeInitialization(providerId);
+  return Boolean(active && active.kind === 'hindcast');
+}
+
 function providerFrameIndices(providerId = S.activeProvider) {
-  const matches = S.cycles.map((cycle, index) => ({ cycle, index }))
-    .filter(({ cycle }) => providerFor(cycle.hazard_source).id === providerId);
-  if (!matches.length) return [];
-  const latestInit = Math.max(...matches.map(({ cycle }) => Date.parse(cycle.issued_utc) || 0));
-  return matches
-    .filter(({ cycle }) => (Date.parse(cycle.issued_utc) || 0) === latestInit)
+  const active = activeInitialization(providerId);
+  if (!active) return [];
+  return S.cycles.map((cycle, index) => ({ cycle, index }))
+    .filter(({ cycle }) => providerFor(cycle.hazard_source).id === providerId
+      && cycle.issued_utc === active.issued)
     .sort((a, b) => frameStartMs(a.cycle) - frameStartMs(b.cycle))
     .map(({ index }) => index);
+}
+
+function viewingArchivedRun(providerId = S.activeProvider) {
+  const active = activeInitialization(providerId);
+  // A hindcast is not an "archived run" of a live product; it is a
+  // verification product and gets its own label rather than borrowing one
+  // that implies it was once current guidance.
+  return Boolean(active && !active.isLatest && active.kind !== 'hindcast');
+}
+
+// The horizon and window shape are properties of the product, not of the
+// provider: the same WeatherNext initialization is published as three daily
+// windows or as twenty-five rolling ones depending on how it was sliced.
+// Read it off the cycles rather than hardcoding a horizon that goes stale
+// the first time the pipeline changes.
+function windowShape(frames) {
+  const withWindow = frames.find((c) => Number(c.product_window_hours) > 0);
+  if (!withWindow) return null;
+  const hours = Number(withWindow.product_window_hours);
+  const step = Number(withWindow.product_step_hours) || hours;
+  return { hours, step, overlap: frames.some((c) => c.windows_overlap) };
+}
+
+function horizonHours(frames) {
+  const values = frames.map((c) => Number(c.forecast_horizon_hours))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return values.length ? Math.max(...values) : null;
 }
 
 function providerCoverage(providerId) {
   const frames = providerFrameIndices(providerId).map((index) => S.cycles[index]);
   if (!frames.length) return 'not in archive';
   const inputs = frames.reduce((sum, c) => sum + (Array.isArray(c.input_lead_hours) ? c.input_lead_hours.length : 0), 0);
-  if (providerId === 'weathernext2') {
-    return `latest init · ${frames.length} daily windows (72h horizon)`;
+  const shape = windowShape(frames);
+  const horizon = horizonHours(frames);
+  // Name the run being shown. Saying "latest init" while an archived run is on
+  // screen is exactly the confusion the picker exists to prevent.
+  const active = activeInitialization(providerId);
+  if (active && active.kind === 'hindcast') {
+    const v = frames[0] && frames[0].verification;
+    const skill = v && Number.isFinite(Number(v.crpss))
+      ? ` · CRPSS ${Number(v.crpss) >= 0 ? '+' : ''}${Number(v.crpss).toFixed(2)} vs climatology`
+      : '';
+    // The provider name already says "Hindcast"; repeating it here reads as
+    // a stutter in the header.
+    return `scored against observed outages${skill}`;
+  }
+  const run = active && !active.isLatest
+    ? `archived ${formatInitStamp(active.issued)}`
+    : 'latest init';
+  if (shape) {
+    const cadence = shape.overlap
+      ? `${frames.length} × ${shape.hours}h windows every ${shape.step}h`
+      : `${frames.length} × ${shape.hours}h windows`;
+    return `${run} · ${cadence}`
+      + (horizon ? ` (${Math.round(horizon / 24)}d horizon)` : '');
   }
   const trackFrames = providerId === S.activeProvider && S.track && Array.isArray(S.track.points) ? S.track.points.length : null;
-  return `latest init · ${inputs || 'unknown'} leads${trackFrames ? ` · ${trackFrames} track pts` : ''}`;
+  return `${run} · ${inputs || 'unknown'} leads${trackFrames ? ` · ${trackFrames} track pts` : ''}`;
 }
 
 function windLabel(short) {
@@ -244,12 +359,29 @@ function wireEvents() {
 
   $('d-close').addEventListener('click', closeDrawer);
 
+  const initToggle = $('init-toggle');
+  if (initToggle) {
+    initToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const menu = $('init-menu');
+      const opening = menu.hidden;
+      if (opening) drawInitPicker();
+      menu.hidden = !opening;
+      initToggle.setAttribute('aria-expanded', String(opening));
+    });
+    document.addEventListener('click', (event) => {
+      const picker = $('init-picker');
+      if (picker && !picker.contains(event.target)) closeInitMenu();
+    });
+  }
+
   document.addEventListener('keydown', (event) => {
     if (event.code === 'Space' && !/INPUT|SELECT|BUTTON|TEXTAREA/.test(event.target.tagName)) {
       event.preventDefault(); togglePlayback();
     }
     if (event.key === 'Escape') {
       closeDrawer();
+      closeInitMenu();
       const dd = $('search-dropdown');
       if (dd) dd.hidden = true;
     }
@@ -318,6 +450,7 @@ function updateFrameNavigation() {
   $('cycle-next').disabled = position >= frames.length - 1;
   buildCycleDots();
   drawSourceSwitch();
+  drawInitPicker();
 }
 
 function buildCycleDots() {
@@ -332,12 +465,32 @@ function buildCycleDots() {
   }).join('');
 }
 
+// Where a cycle's payload lives. The latest initialization ships inside the
+// site itself; older ones carry `data_base`, an absolute URL to the archive
+// site, so the site repository never holds more than one run. That archive is
+// published under the same host, so this is a same-origin fetch and needs no
+// CORS handling — but the value is treated as a plain URL prefix either way.
+//
+// Geometry is NOT relocated: it is content-addressed and shared across every
+// run, so one copy stays beside the site and archived cycles point back at it.
+function cycleRoot(summary) {
+  const id = encodeURIComponent(summary.cycle_id);
+  const base = typeof summary.data_base === 'string' ? summary.data_base.replace(/\/+$/, '') : '';
+  return base ? `${base}/cycles/${id}` : `data/cycles/${id}`;
+}
+
+function cycleGeometryUrl(summary) {
+  return summary.geometry_path
+    ? `data/${summary.geometry_path}`
+    : `${cycleRoot(summary)}/counties.geojson`;
+}
+
 async function loadCycle(index, requestedTrackFrame = null) {
   const i = Math.max(0, Math.min(S.cycles.length - 1, index));
   const token = ++S.loadToken;
   const summary = S.cycles[i];
-  const root = `data/cycles/${encodeURIComponent(summary.cycle_id)}`;
-  const geometryUrl = summary.geometry_path ? `data/${summary.geometry_path}` : `${root}/counties.geojson`;
+  const root = cycleRoot(summary);
+  const geometryUrl = cycleGeometryUrl(summary);
 
   const [cycle, counties, geo, track] = await Promise.all([
     cachedJson(`${root}/cycle.json`),
@@ -390,8 +543,8 @@ async function loadCycle(index, requestedTrackFrame = null) {
 
 function scheduleCyclePrefetch() {
   const run = () => providerFrameIndices().filter((idx) => idx !== S.idx).forEach((idx) => {
-    const s = S.cycles[idx], r = `data/cycles/${encodeURIComponent(s.cycle_id)}`;
-    const g = s.geometry_path ? `data/${s.geometry_path}` : `${r}/counties.geojson`;
+    const s = S.cycles[idx], r = cycleRoot(s);
+    const g = cycleGeometryUrl(s);
     [`${r}/cycle.json`, `${r}/counties.json`, g, `${r}/track.json`].forEach((u) => cachedJson(u).catch(() => {}));
   });
   if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 1500 });
@@ -438,7 +591,13 @@ function formatValidInstant(val) {
 function updateCycleChrome() {
   const cycle = S.cycle, issued = new Date(cycle.issued_utc);
   const prov = providerFor(cycle.meta ? cycle.meta.hazard_source : cycle.hazard_source);
-  const shortProv = prov.id === 'hrrr' ? 'NOAA HRRR' : prov.id === 'weathernext2' ? 'WeatherNext 2' : 'Forecast';
+  const isHindcastSource = String(
+    (cycle.meta && cycle.meta.hazard_source) || cycle.hazard_source || ''
+  ).startsWith('hindcast');
+  const shortProv = prov.id === 'hrrr' ? 'NOAA HRRR'
+    : prov.id === 'weathernext2' ? 'WeatherNext 2'
+    : isHindcastSource ? 'Hindcast'
+    : 'Forecast';
   const frames = activeFrames(), position = activeFramePosition(frames);
   const frame = frames[position], trackPoint = frame && frame.trackIndex != null && S.track ? S.track.points[frame.trackIndex] : null;
   const inputCount = Array.isArray(cycle.input_lead_hours) ? cycle.input_lead_hours.length
@@ -457,26 +616,55 @@ function updateCycleChrome() {
     issueStr = `${months[issuedDate.getUTCMonth()]} ${issuedDate.getUTCDate()}, ${utcHours}:${utcMins} UTC`;
   }
   const leadSign = Number(activeLead) > 0 ? `+${activeLead}` : `${activeLead}`;
-  $('event-name').textContent = `Active Risk Outlook — Issue ${issueStr} Lead ${leadSign}h`;
+  const archived = viewingArchivedRun(prov.id);
+  const hindcast = viewingHindcast(prov.id);
+  const storm = String(cycle.event_name || '').replace(/\s*—\s*hindcast$/i, '');
+  $('event-name').textContent = hindcast
+    ? `HINDCAST — ${storm || 'past storm'} verified against observed outages`
+    : archived
+      ? `ARCHIVED RUN — Issue ${issueStr} Lead ${leadSign}h`
+      : `Active Risk Outlook — Issue ${issueStr} Lead ${leadSign}h`;
   $('overview-provider').textContent = `${shortProv} · ${providerCoverage(prov.id)}`;
   $('cycle-time').textContent = trackPoint ? formatValidInstant(trackPoint.valid_utc) : formatValidRange(cycle);
   $('cycle-init').textContent = `Initialized ${formatCycleTime(cycle.issued_utc)}`;
+  const runTag = hindcast ? ' · hindcast' : archived ? ' · archived run' : '';
   $('cycle-counter').textContent = trackPoint
-    ? `${shortProv} · track fix ${position + 1} of ${frames.length}`
-    : `${shortProv} · window ${position + 1} of ${frames.length}`;
+    ? `${shortProv} · track fix ${position + 1} of ${frames.length}${runTag}`
+    : `${shortProv} · window ${position + 1} of ${frames.length}${runTag}`;
 
   const leadEl = $('cycle-lead');
   leadEl.textContent = trackPoint ? `Lead +${trackPoint.lead_hours}h · storm center` : `${formatCycleLead(cycle)} (${inputCount || '4'} weather model steps)`;
 
   const note = $('frame-note');
   if (note) {
+    const meta = cycle.meta || {};
+    const spanHrs = meta.valid_start_utc && meta.valid_end_utc
+      ? Math.round((new Date(meta.valid_end_utc) - new Date(meta.valid_start_utc)) / 36e5)
+      : null;
+    // Overlapping windows are successive views of one forecast, not separate
+    // events. Stepping the slider must not read as 25 storms in a row.
+    const stepHrs = Number(cycle.product_step_hours || meta.step_hours) || null;
+    const windowHrs = Number(cycle.product_window_hours || meta.window_hours) || null;
+    const overlaps = Boolean(cycle.windows_overlap || meta.windows_overlap);
+    // Accumulation length is the window the product states, when it states
+    // one. valid_end - valid_start is six hours shorter, because each
+    // 6-hourly step stands for the six hours preceding its valid time - so
+    // quoting the span here and the window in the overlap clause would put
+    // two different numbers for the same thing in one sentence.
+    const coveredHrs = windowHrs || spanHrs || 18;
+    const overlapNote = overlaps && windowHrs && stepHrs
+      ? ` Frames advance ${stepHrs}h, so consecutive windows overlap by ${windowHrs - stepHrs}h — successive views of one forecast, not separate events.`
+      : '';
     note.textContent = trackPoint
       ? `Moves through ${frames.length} track fixes. County risk field represents +${cycle.forecast_horizon_hours || 18}h aggregate.`
-      : `Window ${position + 1} of ${frames.length}: 18h cumulative outage risk synthesized from ${inputCount || '4'} weather model leads.`;
+      : `Window ${position + 1} of ${frames.length}: ${coveredHrs}h cumulative outage risk synthesized from ${inputCount || '4'} weather model leads.${overlapNote}`;
   }
 
   const liveAgeHours = Number.isNaN(+issued) ? null : (Date.now() - issued.getTime()) / 36e5;
-  const freshness = cycle.degraded_mode ? 'degraded' : liveAgeHours != null && liveAgeHours > 12 ? 'stale' : cycle.freshness;
+  const freshness = hindcast ? 'hindcast'
+    : archived ? 'archived'
+    : cycle.degraded_mode ? 'degraded'
+    : liveAgeHours != null && liveAgeHours > 12 ? 'stale' : cycle.freshness;
   $('freshness').textContent = freshness;
   $('freshness').className = `pill ${freshness}`;
   $('source-badge').textContent = `${cycle.meta.forecast_provider || 'HRRR'} · ${integer.format(S.counties.length)} counties`;
@@ -1303,15 +1491,32 @@ function hideTooltip() {
 /* ==========================================================================
    UI Controls & Toolbars
    ========================================================================== */
+// The layers available for the cycle on screen. Verification layers are
+// offered only when the loaded payload actually carries observations, so a
+// forecast can never render an "observed" layer at all.
+function availableLayers() {
+  const columns = S.counties.length ? Object.keys(S.counties[0]) : [];
+  const extra = VERIFICATION_LAYERS.filter((layer) => columns.includes(layer.key));
+  return LAYERS.concat(extra);
+}
+
 function buildLayers() {
   const host = $('layers');
   if (!host) return;
   host.innerHTML = '';
-  LAYERS.forEach((layer) => {
+  const layers = availableLayers();
+  // If the previous cycle was a hindcast and this one is not, the selected
+  // layer may no longer exist. Fall back rather than rendering a blank map.
+  if (!layers.some((layer) => layer.key === S.layer)) S.layer = LAYERS[0].key;
+  layers.forEach((layer) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = layerLabel(layer);
     btn.setAttribute('role', 'tab');
+    if (layer.verification) {
+      btn.classList.add('layer-verification');
+      btn.title = 'Verification layer — what actually happened, available only for hindcasts';
+    }
     if (layer.key === 'peak_gust_ms') btn.title = windLabel(false);
     btn.setAttribute('aria-selected', String(layer.key === S.layer));
     btn.addEventListener('click', () => {
@@ -1446,7 +1651,9 @@ function wireExport() {
   });
 }
 
-function activeLayer() { return LAYERS.find((l) => l.key === S.layer) || LAYERS[0]; }
+function activeLayer() {
+  return availableLayers().find((l) => l.key === S.layer) || LAYERS[0];
+}
 function layerDomain(layer) {
   const values = S.counties.map((r) => r[layer.key]).filter((v) => v != null && !Number.isNaN(v));
   const maxVal = values.length ? Math.max(...values) : 1;
@@ -1566,6 +1773,111 @@ function providerTargetIndex(providerId) {
   })[0];
 }
 
+/* ==========================================================================
+   Forecast initialization picker
+
+   The archive keeps the last few initializations per hazard source. This
+   switches between them. The hard requirement is that an archived run never
+   reads as current guidance, so choosing one repaints the control amber, the
+   headline, the freshness pill and the counter all say so, and the choice is
+   dropped the moment it stops being available.
+   ========================================================================== */
+function formatInitStamp(issued) {
+  const date = new Date(issued);
+  if (Number.isNaN(+date)) return String(issued || 'unknown');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[date.getUTCMonth()]} ${date.getUTCDate()} ${String(date.getUTCHours()).padStart(2, '0')}Z`;
+}
+
+function initAgeLabel(issued) {
+  const date = new Date(issued);
+  if (Number.isNaN(+date)) return '';
+  const hours = (Date.now() - date.getTime()) / 36e5;
+  if (hours < 1) return 'just now';
+  if (hours < 48) return `${Math.round(hours)}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function closeInitMenu() {
+  const menu = $('init-menu'), toggle = $('init-toggle');
+  if (!menu || !toggle) return;
+  menu.hidden = true;
+  toggle.setAttribute('aria-expanded', 'false');
+}
+
+function selectInitialization(issued) {
+  const list = providerInitializations();
+  const target = list.find((entry) => entry.issued === issued);
+  closeInitMenu();
+  if (!target) return;
+  stopPlayback();
+  // null rather than the newest timestamp, so the view keeps following the
+  // latest run as new initializations arrive instead of pinning to what
+  // happened to be newest when the page was opened.
+  S.selectedInit = target.isLatest ? null : target.issued;
+  const frames = providerFrameIndices();
+  if (frames.length) loadCycle(frames[0]);
+}
+
+function drawInitPicker() {
+  const picker = $('init-picker'), menu = $('init-menu'), label = $('init-label');
+  if (!picker || !menu || !label) return;
+  const list = providerInitializations();
+  // One initialization is not a choice; hide the control rather than offer a
+  // menu with a single disabled row.
+  picker.hidden = list.length < 2;
+  if (picker.hidden) { closeInitMenu(); return; }
+
+  const active = activeInitialization();
+  const hindcast = Boolean(active && active.kind === 'hindcast');
+  const archived = Boolean(active && !active.isLatest && !hindcast);
+  picker.dataset.archived = String(archived);
+  picker.dataset.hindcast = String(hindcast);
+  label.textContent = hindcast
+    ? String(active.eventName || '').replace(/\s*—\s*hindcast$/i, '') || 'Hindcast'
+    : archived ? formatInitStamp(active.issued) : 'Latest';
+  $('init-toggle').title = hindcast
+    ? 'Showing a HINDCAST — a past storm scored against what actually happened. Not a forecast. Click to change.'
+    : archived
+      ? `Showing the archived ${formatInitStamp(active.issued)} run — not current guidance. Click to change.`
+      : 'Showing the latest initialization. Click to view an earlier run.';
+
+  const heading = document.createElement('div');
+  heading.className = 'init-menu-group';
+  // The menu heading has to match what it lists. "Forecast initialization"
+  // over a list of hindcast storms is the same category error the tags exist
+  // to prevent.
+  heading.textContent = list.every((entry) => entry.kind === 'hindcast')
+    ? 'Hindcast storm'
+    : 'Forecast initialization';
+  const rows = list.map((entry) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', String(active && entry.issued === active.issued));
+    const hindcast = entry.kind === 'hindcast';
+    const name = document.createElement('b');
+    // A hindcast is identified by the storm it verifies, not by an issue time
+    // nobody recognises. "Ida 2021" is the useful label; "Aug 29 00Z" is not.
+    name.textContent = hindcast
+      ? String(entry.eventName || '').replace(/\s*—\s*hindcast$/i, '') || formatInitStamp(entry.issued)
+      : formatInitStamp(entry.issued);
+    const tag = document.createElement('span');
+    tag.className = `init-tag${hindcast ? ' hindcast' : entry.isLatest ? '' : ' archived'}`;
+    tag.textContent = hindcast ? 'hindcast' : entry.isLatest ? 'latest' : 'archived';
+    name.append(tag);
+    const detail = document.createElement('em');
+    const horizon = entry.horizonHours ? ` · ${Math.round(entry.horizonHours / 24)}d` : '';
+    detail.textContent = hindcast
+      ? `verified against observed outages · ${formatInitStamp(entry.issued)}`
+      : `${entry.cycles} window${entry.cycles === 1 ? '' : 's'}${horizon} · ${initAgeLabel(entry.issued)}`;
+    button.append(name, detail);
+    button.addEventListener('click', () => selectInitialization(entry.issued));
+    return button;
+  });
+  menu.replaceChildren(heading, ...rows);
+}
+
 function drawSourceSwitch() {
   const host = $('source-switch');
   if (!host) return;
@@ -1583,6 +1895,12 @@ function drawSourceSwitch() {
     btn.title = `Switch to ${provider.label}`;
     btn.addEventListener('click', () => {
       stopPlayback();
+      // Initializations are per hazard source and rarely line up across
+      // providers. Carrying a pin across would silently fall back to that
+      // provider's latest while the control still read "archived".
+      if (!providerInitializations(id).some((entry) => entry.issued === S.selectedInit)) {
+        S.selectedInit = null;
+      }
       const target = providerTargetIndex(id);
       if (target != null) loadCycle(target);
     });
@@ -1620,10 +1938,19 @@ function drawSourceStack() {
       row.title = `${label} has no cycles in this archive.`;
     } else {
       state.textContent = id === activeId ? 'active' : providerCoverage(id);
-      const target = providerTargetIndex(id);
       row.title = `Show ${label} · ${providerCoverage(id)}`;
       row.setAttribute('aria-pressed', String(id === activeId));
-      row.addEventListener('click', () => { stopPlayback(); loadCycle(target); });
+      row.addEventListener('click', () => {
+        stopPlayback();
+        // Resolve the target inside the handler, not at render time: dropping
+        // an initialization pin that this provider does not have changes which
+        // cycle is the right landing frame.
+        if (!providerInitializations(id).some((entry) => entry.issued === S.selectedInit)) {
+          S.selectedInit = null;
+        }
+        const target = providerTargetIndex(id);
+        if (target != null) loadCycle(target);
+      });
     }
     row.append(name, state);
     return row;

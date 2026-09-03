@@ -1,0 +1,35 @@
+[
+  {
+    "hazard_source": "weathernext2_100m_wind_proxy",
+    "forecast_provider": "Google DeepMind WeatherNext 2 via BigQuery",
+    "issued_utc": "2026-09-03T06:00:00+00:00",
+    "is_latest_initialization": true,
+    "cycles": 25,
+    "horizon_hours": 168.0,
+    "product_window_hours": 24.0,
+    "product_step_hours": 6.0,
+    "windows_overlap": true
+  },
+  {
+    "hazard_source": "hrrr_forecast_calibrated_county_centroid",
+    "forecast_provider": "NOAA HRRR via AWS Open Data",
+    "issued_utc": "2026-09-01T21:00:00+00:00",
+    "is_latest_initialization": true,
+    "cycles": 1,
+    "horizon_hours": 18.0,
+    "product_window_hours": null,
+    "product_step_hours": null,
+    "windows_overlap": false
+  },
+  {
+    "hazard_source": "weathernext2_100m_wind_proxy",
+    "forecast_provider": "Google DeepMind WeatherNext 2 via BigQuery",
+    "issued_utc": "2026-09-01T12:00:00+00:00",
+    "is_latest_initialization": false,
+    "cycles": 3,
+    "horizon_hours": 72.0,
+    "product_window_hours": null,
+    "product_step_hours": null,
+    "windows_overlap": false
+  }
+]

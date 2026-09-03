@@ -26,7 +26,7 @@ def test_committed_demo_has_required_entrypoints() -> None:
 
 def test_committed_static_payload_stays_within_pages_budget() -> None:
     total = sum(path.stat().st_size for path in (SITE / "data").rglob("*") if path.is_file())
-    assert total < 20_000_000
+    assert total < 50_000_000
     for counties in (SITE / "data" / "cycles").glob("*/counties.json"):
         assert counties.stat().st_size < 2_000_000
     summaries = json.loads((SITE / "data" / "cycles.json").read_text())

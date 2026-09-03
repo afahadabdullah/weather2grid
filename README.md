@@ -46,6 +46,57 @@ python -m http.server 8081 --directory site
 Open <http://127.0.0.1:8081/>. Do not open `site/index.html` directly because
 browsers restrict JSON requests from `file://` pages.
 
+## Forecast history and the initialization picker
+
+The site keeps more than one forecast initialization. `export_products.py`
+retains the newest `--keep-initializations` runs per `hazard_source` (default
+4); the newest is flagged `is_latest_initialization` and shown by default, and
+the rest are offered by the initialization picker in the masthead, beside the
+theme toggle. `data/initializations.json` indexes them. The picker only appears
+when the active hazard source actually has more than one run.
+
+Selecting an archived run must never look like current guidance, so it turns the
+picker amber, retitles the headline `ARCHIVED RUN — …`, sets the freshness pill
+to `archived`, and labels the source line `archived <stamp>` instead of
+`latest init`. Switching hazard source drops an initialization pin the new
+source does not have, rather than silently falling back to its latest while the
+control still says archived. The banner in `status.json` is computed from the
+latest initialization only, so a retained old run cannot change what today's
+product claims.
+
+Retention is per initialization, never per cycle: evicting some windows of a run
+would leave the frame slider animating across gaps.
+
+### Where archived payloads live
+
+Older runs' `cycles/<id>/` payloads are written to a second checkout
+(`--archive-output`) that is published to Pages under the same account, so they
+sit at `https://<user>.github.io/<repo>/` — the **same origin** as the
+dashboard, since scheme, host and port all match and only the path differs. No
+CORS configuration is needed anywhere. Archived summaries carry `data_base`, an
+absolute URL prefix, and `cycleRoot()` in `app.js` resolves each cycle through
+it; cycles without it load from `data/` exactly as before, so the split is
+opt-in and the exporter works unchanged without it.
+
+Only cycle payloads move. `cycles.json`, `initializations.json`, `status.json`
+and the content-addressed `geometries/` stay with the site — the index is small,
+and geometry is deduplicated across every run, so one copy beside the site beats
+one per archive.
+
+**Measured sizes.** One cycle's `counties.json` is 0.88 MB, 0.226 MB packed. An
+extended 25-window run is 22 MB in the working tree, 5.6 MB of git objects per
+publish.
+
+By default the split does *not* reduce the site repository's per-publish growth:
+the current run's data is new every time. What it does is keep *historical* data
+out of this repository entirely and put it somewhere disposable — nothing links
+to the archive's old commits, so its history can be collapsed to one commit at
+any time. `--offload-current` moves the current run as well, leaving this
+repository with only code, indexes and geometry and reducing its churn to a few
+hundred kilobytes per publish; the cost is that the site then renders nothing if
+the archive is unreachable. The exporter prints both trees' sizes on each run
+and warns above 250 MB.
+
 ## Export products from the current StormGrid repository
 
 The repositories can live beside one another:

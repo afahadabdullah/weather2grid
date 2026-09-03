@@ -27,6 +27,11 @@ DASHBOARD_COLUMNS = [
     "q05_outage_fraction", "q10_outage_fraction", "q25_outage_fraction",
     "q50_outage_fraction", "q75_outage_fraction", "q90_outage_fraction",
     "q95_outage_fraction", "q99_outage_fraction",
+    # Verification only. A forecast cycle cannot have these -- the outcome has
+    # not happened yet -- so their presence is what distinguishes a hindcast
+    # payload, and the map layer that uses them only exists for one.
+    "observed_outage_fraction", "observed_customers_out",
+    "residual_outage_fraction", "residual_customers_out",
 ]
 
 
@@ -131,6 +136,22 @@ def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
         "forecast_horizon_hours": horizon_hours,
         "input_lead_hours": clean(input_leads),
         "lead_step_hours": clean(lead_step),
+        # Product window geometry, when the archive states it. An adapter that
+        # slices one initialization into several windows says here how long
+        # each window is and how far apart they start; when the step is shorter
+        # than the window they overlap, and consecutive frames are successive
+        # views of ONE forecast rather than separate events. The dashboard has
+        # to say so, so it needs the numbers rather than a hardcoded guess.
+        "product_window_hours": clean(meta.get("window_hours")),
+        "product_step_hours": clean(meta.get("step_hours")),
+        "windows_overlap": bool(meta.get("windows_overlap", False)),
+        # A hindcast is a measurement of past performance, not a forecast.
+        # The dashboard has to be able to tell them apart without inspecting
+        # dates, so the kind travels explicitly rather than being inferred.
+        "product_kind": str(meta.get("product_kind", "forecast")),
+        "hazard_basis": clean(meta.get("hazard_basis")),
+        "has_observed": bool(meta.get("has_observed", False)),
+        "verification": clean(meta.get("verification")),
         "display_frame_count": 1,
         "county_data_format": "w2g-columnar-v1",
         "training_data_cutoff_utc": meta.get("training_data_cutoff_utc"),
@@ -138,31 +159,100 @@ def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
 
 
 def _series_key(summary: dict[str, Any]) -> str:
-    """Identify windows that belong to the same forecast initialization series."""
+    """Identify windows that belong to the same forecast initialization series.
+
+    Hindcasts are keyed per storm, not pooled with the live forecast series.
+    Sharing a series would let a newer forecast evict a hindcast through
+    retention, or a hindcast claim to be the latest initialization of a live
+    product -- both wrong, and the second is dangerous.
+    """
+    if str(summary.get("product_kind", "forecast")) == "hindcast":
+        return f"hindcast:{summary.get('event_id', '')}"
     return str(summary.get("hazard_source", ""))
 
 
-def _discard_older_initializations(summaries: list[dict[str, Any]], staging: Path) -> list[dict[str, Any]]:
-    """Keep every window from the newest initialization, and remove older runs."""
-    newest: dict[str, float] = {}
-    issued_values: dict[str, float] = {}
+def _issued_value(summary: dict[str, Any]) -> float:
+    try:
+        issued = pd.Timestamp(summary.get("issued_utc"))
+        return issued.timestamp() if not pd.isna(issued) else float("-inf")
+    except (TypeError, ValueError):
+        return float("-inf")
+
+
+# How many forecast initializations per hazard source stay on the public site.
+# The newest is "latest"; the rest are the history the archive picker offers.
+#
+# This is a size decision, not a taste one. One extended WeatherNext
+# initialization is 25 windows of ~0.9 MB of county JSON, so ~22 MB on disk and
+# ~5.6 MB of git objects once packed. Four initializations is roughly 88 MB in
+# the working tree - well inside a GitHub Pages site, and the browser still
+# fetches exactly one cycle at a time, so page weight does not change at all.
+# What does grow without bound is git HISTORY, which retention cannot shrink:
+# every publish adds its blobs forever. See docs/OPERATIONS.md.
+DEFAULT_KEEP_INITIALIZATIONS = 4
+
+
+def _apply_retention(summaries: list[dict[str, Any]], staging: Path,
+                     keep: int) -> list[dict[str, Any]]:
+    """Keep the newest `keep` initializations per series and drop older ones.
+
+    Every window of a retained initialization is kept, because a forecast whose
+    frames were partly evicted would animate with silent gaps. Each summary is
+    tagged `is_latest_initialization`, which is what lets the dashboard show an
+    archived run without presenting it as current guidance.
+    """
+    keep = max(1, int(keep))
+    by_series: dict[str, list[dict[str, Any]]] = {}
     for summary in summaries:
-        try:
-            issued = pd.Timestamp(summary.get("issued_utc"))
-            value = issued.timestamp() if not pd.isna(issued) else float("-inf")
-        except (TypeError, ValueError):
-            value = float("-inf")
-        issued_values[str(summary["cycle_id"])] = value
-        key = _series_key(summary)
-        newest[key] = max(newest.get(key, float("-inf")), value)
+        by_series.setdefault(_series_key(summary), []).append(summary)
 
     kept: list[dict[str, Any]] = []
-    for summary in summaries:
-        if issued_values[str(summary["cycle_id"])] == newest[_series_key(summary)]:
-            kept.append(summary)
-            continue
-        shutil.rmtree(staging / "cycles" / str(summary["cycle_id"]), ignore_errors=True)
+    for items in by_series.values():
+        initializations = sorted({_issued_value(item) for item in items},
+                                 reverse=True)
+        retained = set(initializations[:keep])
+        newest = initializations[0] if initializations else None
+        for summary in items:
+            value = _issued_value(summary)
+            # "Latest initialization" is a statement about a live forecast
+            # series. A hindcast is a fixed measurement of a past storm and is
+            # never the current run of anything, so it never claims the flag --
+            # otherwise a 2016 storm would arrive in the dashboard labelled
+            # latest simply because it is the only run of its own series.
+            summary["is_latest_initialization"] = (
+                value == newest
+                and summary.get("product_kind", "forecast") != "hindcast")
+            if value in retained:
+                kept.append(summary)
+            else:
+                shutil.rmtree(staging / "cycles" / str(summary["cycle_id"]),
+                              ignore_errors=True)
     return kept
+
+
+def initialization_index(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per retained initialization, newest first, for the picker."""
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for summary in summaries:
+        key = (_series_key(summary), str(summary.get("issued_utc", "")))
+        entry = grouped.setdefault(key, {
+            "hazard_source": _series_key(summary),
+            "forecast_provider": summary.get("forecast_provider"),
+            "issued_utc": summary.get("issued_utc"),
+            "is_latest_initialization": bool(
+                summary.get("is_latest_initialization", False)),
+            "cycles": 0,
+            "horizon_hours": None,
+            "product_window_hours": summary.get("product_window_hours"),
+            "product_step_hours": summary.get("product_step_hours"),
+            "windows_overlap": bool(summary.get("windows_overlap", False)),
+        })
+        entry["cycles"] += 1
+        horizon = summary.get("forecast_horizon_hours")
+        if isinstance(horizon, (int, float)):
+            entry["horizon_hours"] = max(entry["horizon_hours"] or 0, horizon)
+    return sorted(grouped.values(),
+                  key=lambda entry: str(entry["issued_utc"]), reverse=True)
 
 
 def _discard_unreferenced_geometries(
@@ -323,9 +413,74 @@ def publish_geometry(source: Path, staging: Path) -> str:
     return relative.as_posix()
 
 
+def _relocate_archived_cycles(summaries: list[dict[str, Any]], staging: Path,
+                              archive_output: Path, archive_base_url: str,
+                              include_latest: bool = False) -> int:
+    """Move every non-latest cycle's payload out of the published site tree.
+
+    The main repository then carries exactly one initialization no matter how
+    long the archive gets, and its git history stops growing with the number of
+    runs kept. Older payloads go to a second checkout that is published to
+    Pages under the same account, so they are SAME-ORIGIN with the site
+    (scheme, host and port all match; only the path differs) and need no CORS
+    configuration at all.
+
+    Only `cycles/<id>/` moves. `cycles.json`, `initializations.json`,
+    `status.json` and the content-addressed `geometries/` stay in the main
+    repository: the index is small, and county geometry is deduplicated across
+    every run, so keeping one copy beside the site is cheaper than copying it
+    into the archive.
+
+    With `include_latest`, the CURRENT run is offloaded too. That is the
+    difference between a site repository that still grows by one run per
+    publish and one that grows by a few hundred kilobytes of index -- flat, in
+    practice. The cost is that the site then has no forecast data of its own:
+    if the archive is unreachable, nothing renders, where otherwise the current
+    run would still work. Off by default for that reason.
+    """
+    base = archive_base_url.rstrip("/")
+    destination = archive_output / "cycles"
+    destination.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    retained: set[str] = set()
+    for summary in summaries:
+        cycle_id = str(summary["cycle_id"])
+        if summary.get("is_latest_initialization") and not include_latest:
+            continue
+        retained.add(cycle_id)
+        summary["data_base"] = base
+        source = staging / "cycles" / cycle_id
+        target = destination / cycle_id
+        if not source.is_dir():
+            # Already in the archive from an earlier publish and not rebuilt
+            # this time. Nothing to move, but it must still be there.
+            if not target.is_dir():
+                raise SystemExit(
+                    f"{cycle_id} is archived but its payload is in neither "
+                    f"{source} nor {target}")
+            continue
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.move(str(source), str(target))
+        moved += 1
+
+    # Retention already dropped these from the index; drop their payloads too,
+    # or the archive grows forever while nothing links to them.
+    if destination.is_dir():
+        for existing in sorted(destination.iterdir()):
+            if existing.is_dir() and existing.name not in retained:
+                shutil.rmtree(existing, ignore_errors=True)
+    return moved
+
+
 def _build_snapshot(archive: Path, cycle_paths: list[Path],
                     staging: Path, output: Path,
-                    merge: bool = False) -> list[dict[str, Any]]:
+                    merge: bool = False,
+                    keep_initializations: int = DEFAULT_KEEP_INITIALIZATIONS,
+                    archive_output: Path | None = None,
+                    archive_base_url: str = "",
+                    offload_current: bool = False,
+                    ) -> list[dict[str, Any]]:
     """Validate and completely build one not-yet-public snapshot."""
     now = datetime.now(timezone.utc)
     summaries: list[dict[str, Any]] = []
@@ -426,24 +581,49 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
                 write_json(meta_file, existing_cycle_data)
                 summaries.append(summary)
 
-    summaries = _discard_older_initializations(summaries, staging)
+    summaries = _apply_retention(summaries, staging, keep_initializations)
+    if archive_output is not None:
+        _relocate_archived_cycles(summaries, staging, archive_output,
+                                  archive_base_url,
+                                  include_latest=offload_current)
+    # Runs after relocation, and over ALL summaries: an archived cycle still
+    # references its geometry, which stays in the main repository.
     _discard_unreferenced_geometries(summaries, staging)
-    summaries.sort(key=lambda item: item["cycle_id"], reverse=True)
-    any_synthetic = any(item["synthetic"] for item in summaries)
-    any_ungated = any(not item["release_gate_passed"] for item in summaries)
+    # Newest initialization first, and within one initialization the nearest
+    # window first. The old cycle_id sort put the FARTHEST window at index 0,
+    # which made status.json's "latest" the seven-day frame; harmless while the
+    # site re-sorted anyway, wrong now that "latest" also has to mean "not one
+    # of the archived runs".
+    summaries.sort(key=lambda item: (-_issued_value(item),
+                                     str(item.get("valid_start_utc") or ""),
+                                     str(item["cycle_id"])))
+    initializations = initialization_index(summaries)
+    latest_only = [item for item in summaries
+                   if item.get("is_latest_initialization")
+                   and item.get("product_kind", "forecast") != "hindcast"]
+    # Banner state describes the CURRENT forecast. An archived run that was
+    # synthetic must not make today's real product claim synthetic, and an
+    # archived run cannot make an ungated product look gated either.
+    any_synthetic = any(item["synthetic"] for item in latest_only)
+    any_ungated = any(not item["release_gate_passed"] for item in latest_only)
     write_json(staging / "cycles.json", summaries)
+    write_json(staging / "initializations.json", initializations)
     write_json(
         staging / "status.json",
         {
             "version": "0.1.0",
             "generated_at_utc": now.isoformat(),
             "cycles": len(summaries),
+            "cycles_latest_initialization": len(latest_only),
+            "initializations": len(initializations),
+            "keep_initializations": max(1, int(keep_initializations)),
+            "archive_base_url": archive_base_url or None,
             "operational": not (any_synthetic or any_ungated),
             "shadow_mode": bool(any_ungated and not any_synthetic),
             "any_synthetic": any_synthetic,
             "any_ungated": any_ungated,
             "banner": banner(any_synthetic, any_ungated),
-            "latest": summaries[0],
+            "latest": (latest_only or summaries)[0],
         },
     )
 
@@ -454,8 +634,11 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
     # the archive.  Keeping this publish-time avoids browser CORS/rate-limit
     # failures and makes the displayed advisory timestamp auditable.
     nhc_tracks = archive / "nhc-active-tracks.json"
+    existing_nhc = output / "nhc-active-tracks.json"
     if nhc_tracks.exists():
         shutil.copyfile(nhc_tracks, staging / "nhc-active-tracks.json")
+    elif existing_nhc.exists():
+        shutil.copyfile(existing_nhc, staging / "nhc-active-tracks.json")
     else:
         write_json(staging / "nhc-active-tracks.json", {
             "available": False,
@@ -493,9 +676,30 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
     return summaries
 
 
-def export_archive(archive: Path, output: Path, merge: bool = False) -> list[dict[str, Any]]:
+def _tree_bytes(root: Path) -> int:
+    return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
+
+
+def export_archive(archive: Path, output: Path, merge: bool = False,
+                   keep_initializations: int = DEFAULT_KEEP_INITIALIZATIONS,
+                   archive_output: Path | None = None,
+                   archive_base_url: str = "",
+                   offload_current: bool = False,
+                   ) -> list[dict[str, Any]]:
     archive = archive.resolve()
     output = output.resolve()
+    if archive_output is not None:
+        archive_output = Path(archive_output).resolve()
+        if not archive_base_url.strip():
+            raise SystemExit(
+                "--archive-output needs --archive-base-url: without the URL the "
+                "site would link archived runs to a path that does not exist "
+                "on it, and every archived cycle would 404 in the browser.")
+        if not archive_base_url.startswith(("http://", "https://", "/")):
+            raise SystemExit(
+                f"--archive-base-url must be absolute (https://... or /...), "
+                f"got {archive_base_url!r}. A relative value would resolve "
+                "against whatever page the viewer happens to be on.")
     cycle_paths = sorted(archive.glob("*/risk.parquet"))
     if not cycle_paths:
         raise SystemExit(f"No */risk.parquet products found under {archive}")
@@ -510,7 +714,11 @@ def export_archive(archive: Path, output: Path, merge: bool = False) -> list[dic
     staging.mkdir()
 
     try:
-        summaries = _build_snapshot(archive, cycle_paths, staging, output, merge=merge)
+        summaries = _build_snapshot(
+            archive, cycle_paths, staging, output, merge=merge,
+            keep_initializations=keep_initializations,
+            archive_output=archive_output, archive_base_url=archive_base_url,
+            offload_current=offload_current)
         if output.exists():
             os.replace(output, backup)
         os.replace(staging, output)
@@ -530,9 +738,63 @@ def main() -> None:
     parser.add_argument("--archive", type=Path, required=True, help="StormGrid product archive")
     parser.add_argument("--output", type=Path, default=root / "site" / "data", help="Static data destination")
     parser.add_argument("--merge", action="store_true", help="Merge with existing exported cycles in output")
+    parser.add_argument(
+        "--keep-initializations", type=int, default=DEFAULT_KEEP_INITIALIZATIONS,
+        help="Forecast initializations kept per hazard source. The newest is "
+             "shown by default; the rest are offered in the archive picker. "
+             f"Default {DEFAULT_KEEP_INITIALIZATIONS}.")
+    parser.add_argument(
+        "--archive-output", type=Path, default=None,
+        help="Write older initializations' payloads here instead of into the "
+             "published site, so the site repository never carries more than "
+             "one run. Point it at a second Pages checkout.")
+    parser.add_argument(
+        "--archive-base-url", default="",
+        help="Public URL the --archive-output directory is served from, e.g. "
+             "https://<user>.github.io/weather2grid-archive. Required with "
+             "--archive-output.")
+    parser.add_argument(
+        "--offload-current", action="store_true",
+        help="Also move the CURRENT run's payload to --archive-output, leaving "
+             "the site repository with only code, indexes and geometry. Its "
+             "history then stops growing with publishes almost entirely. The "
+             "site has no forecast data of its own after this, so nothing "
+             "renders if the archive is unreachable.")
     args = parser.parse_args()
-    summaries = export_archive(args.archive, args.output, merge=args.merge)
-    print(f"Exported {len(summaries)} forecast cycles to {args.output.resolve()}")
+    summaries = export_archive(args.archive, args.output, merge=args.merge,
+                               keep_initializations=args.keep_initializations,
+                               archive_output=args.archive_output,
+                               archive_base_url=args.archive_base_url,
+                               offload_current=args.offload_current)
+    output = args.output.resolve()
+    index = initialization_index(summaries)
+    latest = [entry for entry in index if entry["is_latest_initialization"]]
+    print(f"Exported {len(summaries)} forecast cycles across {len(index)} "
+          f"initializations to {output}")
+    for entry in index:
+        marker = "latest " if entry["is_latest_initialization"] else "archive"
+        print(f"  {marker}  {entry['issued_utc']}  {entry['cycles']:>3} cycles  "
+              f"{entry['hazard_source']}")
+    size = _tree_bytes(output)
+    print(f"site/data is now {size / 1e6:.1f} MB "
+          f"({len(latest)} live series, --keep-initializations "
+          f"{args.keep_initializations})")
+    if args.archive_output is not None:
+        archived = _tree_bytes(args.archive_output)
+        print(f"archive is {archived / 1e6:.1f} MB at {args.archive_output} "
+              f"-> {args.archive_base_url}")
+        print("The site repository now carries one initialization regardless "
+              "of how many are kept, so its history stops growing with the "
+              "archive. Reset the archive repository's history when it gets "
+              "large; nothing links to its old commits.")
+        return
+    # A static Pages site can carry this; the repository's git history is what
+    # grows without bound, because every publish adds blobs that retention
+    # cannot remove. Say so at the point where it becomes visible.
+    if size > 250e6:
+        print("WARNING: site/data is over 250 MB. Lower --keep-initializations, "
+              "or move publishing to a force-rebuilt orphan branch so history "
+              "stops accumulating.")
 
 
 if __name__ == "__main__":
