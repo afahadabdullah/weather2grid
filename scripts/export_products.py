@@ -81,7 +81,7 @@ def age_hours(issued: str, now: datetime) -> float | None:
 def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
     issued = str(meta.get("forecast_init_time_utc", ""))
     age = age_hours(issued, now)
-    freshness = "degraded" if meta.get("degraded_mode") else "unknown" if age is None else "stale" if age > 12 else "current"
+    freshness = "not evaluated" if meta.get("degraded_mode") else "unknown" if age is None else "stale" if age > 12 else "current"
     valid_start = meta.get("valid_start_utc")
     valid_end = meta.get("valid_end_utc")
     window_hours = None

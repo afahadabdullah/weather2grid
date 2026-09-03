@@ -672,12 +672,13 @@ function updateCycleChrome() {
   }
 
   const liveAgeHours = Number.isNaN(+issued) ? null : (Date.now() - issued.getTime()) / 36e5;
+  const isNotEvaluated = Boolean(cycle.degraded_mode || cycle.freshness === 'degraded' || cycle.freshness === 'not evaluated');
   const freshness = hindcast ? 'hindcast'
     : archived ? 'archived'
-    : cycle.degraded_mode ? 'degraded'
-    : liveAgeHours != null && liveAgeHours > 12 ? 'stale' : cycle.freshness;
+    : isNotEvaluated ? 'not evaluated'
+    : liveAgeHours != null && liveAgeHours > 12 ? 'stale' : (cycle.freshness || 'current');
   $('freshness').textContent = freshness;
-  $('freshness').className = `pill ${freshness}`;
+  $('freshness').className = `pill ${freshness.replace(/\s+/g, '-')}`;
   $('source-badge').textContent = `${cycle.meta.forecast_provider || 'HRRR'} · ${integer.format(S.counties.length)} counties`;
 
   [...$('cycle-dots').children].forEach((dot, i) => dot.classList.toggle('active', i === position));
@@ -1993,9 +1994,9 @@ function drawSourceStack() {
 
 function drawForecast() {
   const meta = S.cycle.meta, storm = stormMeta(), provider = meta.forecast_provider || meta.hazard_source || 'unknown';
-  $('active-source').textContent = `${provider} · ${meta.hazard_model_version || 'forecast product'}`;
-  $('provider-status').textContent = S.cycle.degraded_mode ? 'degraded' : (S.cycle.provider_status || 'ok');
-  $('provider-status').className = `source-status${S.cycle.degraded_mode ? ' degraded' : ''}`;
+  const isNotEvaluated = Boolean(S.cycle.degraded_mode || S.cycle.freshness === 'degraded' || S.cycle.freshness === 'not evaluated');
+  $('provider-status').textContent = isNotEvaluated ? 'not evaluated' : (S.cycle.provider_status || 'ok');
+  $('provider-status').className = `source-status${isNotEvaluated ? ' not-evaluated' : ''}`;
 
   if (!storm) {
     $('storm-symbol').className = 'storm-symbol field';
