@@ -1182,6 +1182,22 @@ h3 {
   border-color: var(--color-orange);
 }
 
+.loop-button {
+  width: 32px;
+  position: relative;
+}
+.loop-button svg {
+  display: block;
+}
+.loop-button[aria-pressed="true"] {
+  color: var(--color-cyan);
+  border-color: var(--color-cyan);
+  background: var(--color-cyan-glow);
+}
+.loop-button[aria-pressed="false"] {
+  opacity: 0.45;
+}
+
 .cyclebar {
   position: relative;
   padding: 0 2px 10px;

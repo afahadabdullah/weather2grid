@@ -11,7 +11,7 @@ const S = {
   basemap: null, track: null, nhcTracks: [], outageStatus: null,
   byFips: new Map(), layer: 'peak_gust_ms', ratio: 0.15,
   triggered: new Set(), selected: null, hoveredFips: null,
-  playing: false, timer: null, loadToken: 0, curve: null, trackFrame: null,
+  playing: false, timer: null, loop: true, loadToken: 0, curve: null, trackFrame: null,
   activeProvider: null,
   // null means "follow the newest initialization". Set to an ISO issue
   // time to pin the view to an archived run.
@@ -357,6 +357,15 @@ function wireEvents() {
     if (S.playing) { stopPlayback(); startPlayback(); }
   });
 
+  const loopBtn = $('cycle-loop');
+  if (loopBtn) {
+    loopBtn.addEventListener('click', () => {
+      S.loop = !S.loop;
+      loopBtn.setAttribute('aria-pressed', String(S.loop));
+      loopBtn.title = `Loop animation: ${S.loop ? 'On' : 'Off'} (L)`;
+    });
+  }
+
   $('d-close').addEventListener('click', closeDrawer);
 
   const initToggle = $('init-toggle');
@@ -378,6 +387,9 @@ function wireEvents() {
   document.addEventListener('keydown', (event) => {
     if (event.code === 'Space' && !/INPUT|SELECT|BUTTON|TEXTAREA/.test(event.target.tagName)) {
       event.preventDefault(); togglePlayback();
+    }
+    if ((event.key === 'l' || event.key === 'L') && !/INPUT|SELECT|TEXTAREA/.test(event.target.tagName)) {
+      if (loopBtn) loopBtn.click();
     }
     if (event.key === 'Escape') {
       closeDrawer();
@@ -697,7 +709,14 @@ function startPlayback() {
   updatePlayButton();
   S.timer = setInterval(async () => {
     const framesNow = activeFrames(), cur = activeFramePosition(framesNow);
-    if (cur >= framesNow.length - 1) { stopPlayback(); return; }
+    if (cur >= framesNow.length - 1) {
+      if (S.loop) {
+        await selectFrame(framesNow[0]);
+      } else {
+        stopPlayback();
+      }
+      return;
+    }
     await selectFrame(framesNow[cur + 1]);
   }, +$('playback-speed').value);
 }
