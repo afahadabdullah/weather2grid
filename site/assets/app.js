@@ -13,6 +13,7 @@ const S = {
   triggered: new Set(), selected: null, hoveredFips: null,
   playing: false, timer: null, loop: true, loadToken: 0, curve: null, trackFrame: null,
   activeProvider: null,
+  archiveMode: false,
   // null means "follow the newest initialization". Set to an ISO issue
   // time to pin the view to an archived run.
   selectedInit: null,
@@ -97,7 +98,7 @@ function providerInitializations(providerId = S.activeProvider) {
   // Hindcasts are excluded: they are never the current run of anything, and
   // marking one latest is exactly the confusion this whole path avoids.
   const forecasts = list.filter((entry) => entry.kind !== 'hindcast');
-  if (forecasts.length && !forecasts.some((entry) => entry.isLatest)) {
+  if (!S.archiveMode && forecasts.length && !forecasts.some((entry) => entry.isLatest)) {
     forecasts[0].isLatest = true;
   }
   return list;
@@ -133,7 +134,8 @@ function viewingArchivedRun(providerId = S.activeProvider) {
   // A hindcast is not an "archived run" of a live product; it is a
   // verification product and gets its own label rather than borrowing one
   // that implies it was once current guidance.
-  return Boolean(active && !active.isLatest && active.kind !== 'hindcast');
+  return Boolean(active && active.kind !== 'hindcast'
+    && (S.archiveMode || !active.isLatest));
 }
 
 // The horizon and window shape are properties of the product, not of the
@@ -270,6 +272,8 @@ function decodeCountyData(payload) {
 async function boot() {
   initTheme();
   const status = await cachedJson('data/status.json');
+  S.archiveMode = Boolean(status.archive_view);
+  initViewNavigation();
   showBanner(status.banner);
 
   const [cycles, basemap, nhc, wn, outageStatus] = await Promise.all([
@@ -311,6 +315,15 @@ async function boot() {
     drawCurve();
     drawCdfIfOpen();
   }, 120));
+}
+
+function initViewNavigation() {
+  const live = $('live-view-link'), archive = $('archive-view-link');
+  if (!live || !archive) return;
+  const active = S.archiveMode ? archive : live;
+  active.setAttribute('aria-current', 'page');
+  if (S.archiveMode) archive.classList.add('archive-active');
+  document.documentElement.dataset.view = S.archiveMode ? 'archive' : 'live';
 }
 
 function debounce(fn, wait) {

@@ -46,14 +46,14 @@ python -m http.server 8081 --directory site
 Open <http://127.0.0.1:8081/>. Do not open `site/index.html` directly because
 browsers restrict JSON requests from `file://` pages.
 
-## Forecast history and the initialization picker
+## Live forecast and forecast archive
 
-The site keeps more than one forecast initialization. `export_products.py`
-retains the newest `--keep-initializations` runs per `hazard_source` (default
-4); the newest is flagged `is_latest_initialization` and shown by default, and
-the rest are offered by the initialization picker in the masthead, beside the
-theme toggle. `data/initializations.json` indexes them. The picker only appears
-when the active hazard source actually has more than one run.
+The live site contains only the newest initialization per `hazard_source`.
+Its **Archive** button opens the separate Weather2Grid archive dashboard;
+the archive's **Live forecast** button returns to current guidance.
+`export_products.py` retains the newest `--keep-initializations` runs per
+source (default 4), keeps the current run in the live checkout, and writes
+older runs to the archive checkout with archive-only indexes.
 
 Selecting an archived run must never look like current guidance, so it turns the
 picker amber, retitles the headline `ARCHIVED RUN — …`, sets the freshness pill
@@ -78,10 +78,11 @@ absolute URL prefix, and `cycleRoot()` in `app.js` resolves each cycle through
 it; cycles without it load from `data/` exactly as before, so the split is
 opt-in and the exporter works unchanged without it.
 
-Only cycle payloads move. `cycles.json`, `initializations.json`, `status.json`
-and the content-addressed `geometries/` stay with the site — the index is small,
-and geometry is deduplicated across every run, so one copy beside the site beats
-one per archive.
+The archive checkout is a complete static dashboard, not just a data bucket.
+It receives the same HTML/CSS/JavaScript shell, archive-only indexes, the
+content-addressed geometry those runs reference, and older `cycles/<id>/`
+payloads. The live checkout retains only current indexes, geometry, and cycle
+payloads.
 
 **Measured sizes.** One cycle's `counties.json` is 0.88 MB, 0.226 MB packed. An
 extended 25-window run is 22 MB in the working tree, 5.6 MB of git objects per

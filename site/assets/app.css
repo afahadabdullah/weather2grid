@@ -306,6 +306,50 @@ h3 {
   align-items: center;
   gap: 10px;
 }
+.view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.view-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: calc(var(--radius-md) - 2px);
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.view-link:hover {
+  color: var(--ink-primary);
+  background: var(--bg-card-hover);
+}
+.view-link[aria-current="page"] {
+  color: var(--color-cyan);
+  background: var(--color-cyan-glow);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-cyan) 40%, transparent);
+}
+.view-link.archive-active[aria-current="page"] {
+  color: var(--color-amber);
+  background: var(--color-amber-glow, var(--bg-card-hover));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-amber) 45%, transparent);
+}
+.view-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 7px currentColor;
+}
 .theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -450,6 +494,9 @@ h3 {
 }
 @media (max-width: 640px) {
   .init-menu { right: auto; left: 0; min-width: 232px; }
+  .mast { align-items: flex-start; }
+  .mast-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .view-link { padding-inline: 7px; }
 }
 
 /* Workspace Layout */

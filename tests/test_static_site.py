@@ -16,6 +16,9 @@ def test_site_uses_relative_assets_and_static_data() -> None:
     assert "/api/" not in app
     assert "data/status.json" in app
     assert "data/cycles.json" in app
+    assert "weather2grid-archive/" in index
+    assert "Live forecast" in index
+    assert "Archive" in index
 
 
 def test_committed_demo_has_required_entrypoints() -> None:

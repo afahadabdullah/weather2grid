@@ -425,11 +425,9 @@ def _relocate_archived_cycles(summaries: list[dict[str, Any]], staging: Path,
     (scheme, host and port all match; only the path differs) and need no CORS
     configuration at all.
 
-    Only `cycles/<id>/` moves. `cycles.json`, `initializations.json`,
-    `status.json` and the content-addressed `geometries/` stay in the main
-    repository: the index is small, and county geometry is deduplicated across
-    every run, so keeping one copy beside the site is cheaper than copying it
-    into the archive.
+    Cycle payloads move here first. Once the export is complete, the archive
+    receives its own dashboard shell, archive-only indexes, and only the
+    content-addressed geometry referenced by those archived runs.
 
     With `include_latest`, the CURRENT run is offloaded too. That is the
     difference between a site repository that still grows by one run per
@@ -471,6 +469,73 @@ def _relocate_archived_cycles(summaries: list[dict[str, Any]], staging: Path,
             if existing.is_dir() and existing.name not in retained:
                 shutil.rmtree(existing, ignore_errors=True)
     return moved
+
+
+def _write_archive_dashboard(archive_output: Path,
+                             summaries: list[dict[str, Any]],
+                             staging: Path, now: datetime) -> None:
+    """Build the archive checkout as a complete, archive-only dashboard.
+
+    The live site and archive deliberately share the same HTML/CSS/JS so they
+    cannot drift into two applications.  Their data indexes are different:
+    the live site lists only current initializations, while this checkout lists
+    only older ones and marks itself as an archive view in ``status.json``.
+    """
+    archived = [dict(item) for item in summaries
+                if not item.get("is_latest_initialization")
+                or item.get("product_kind", "forecast") == "hindcast"]
+    if not archived:
+        return
+
+    source_site = Path(__file__).resolve().parents[1] / "site"
+    for name in ("index.html", "og.png"):
+        source = source_site / name
+        if source.exists():
+            shutil.copyfile(source, archive_output / name)
+    assets = archive_output / "assets"
+    shutil.rmtree(assets, ignore_errors=True)
+    shutil.copytree(source_site / "assets", assets)
+    (archive_output / ".nojekyll").touch()
+
+    archive_data = archive_output / "data"
+    shutil.rmtree(archive_data, ignore_errors=True)
+    archive_data.mkdir(parents=True)
+    for name in ("basemap.geojson", "nhc-active-tracks.json",
+                 "weathernext-active-tracks.json", "live-outage-status.json"):
+        source = staging / name
+        if source.exists():
+            shutil.copyfile(source, archive_data / name)
+    if (staging / "geometries").exists():
+        shutil.copytree(staging / "geometries", archive_data / "geometries")
+
+    archived.sort(key=lambda item: (-_issued_value(item),
+                                    str(item.get("valid_start_utc") or ""),
+                                    str(item["cycle_id"])))
+    for item in archived:
+        item["is_latest_initialization"] = False
+    archive_initializations = initialization_index(archived)
+    for item in archive_initializations:
+        item["is_latest_initialization"] = False
+
+    write_json(archive_data / "cycles.json", archived)
+    write_json(archive_data / "initializations.json", archive_initializations)
+    write_json(archive_data / "status.json", {
+        "version": "0.1.0",
+        "generated_at_utc": now.isoformat(),
+        "cycles": len(archived),
+        "initializations": len(archive_initializations),
+        "archive_view": True,
+        "operational": False,
+        "shadow_mode": True,
+        "any_synthetic": any(item["synthetic"] for item in archived),
+        "any_ungated": any(not item["release_gate_passed"] for item in archived),
+        "banner": {
+            "level": "warning",
+            "title": "ARCHIVED FORECAST — NOT CURRENT GUIDANCE",
+            "detail": "You are viewing an older forecast initialization. Use Live forecast for the current outlook.",
+        },
+        "latest": archived[0],
+    })
 
 
 def _build_snapshot(archive: Path, cycle_paths: list[Path],
@@ -597,33 +662,38 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
     summaries.sort(key=lambda item: (-_issued_value(item),
                                      str(item.get("valid_start_utc") or ""),
                                      str(item["cycle_id"])))
-    initializations = initialization_index(summaries)
     latest_only = [item for item in summaries
                    if item.get("is_latest_initialization")
                    and item.get("product_kind", "forecast") != "hindcast"]
+    # When a dedicated archive checkout is configured, the live dashboard's
+    # public index contains only current runs. Older runs receive their own
+    # archive dashboard below instead of appearing in the live init picker.
+    public_summaries = latest_only if archive_output is not None else summaries
+    initializations = initialization_index(public_summaries)
     # Banner state describes the CURRENT forecast. An archived run that was
     # synthetic must not make today's real product claim synthetic, and an
     # archived run cannot make an ungated product look gated either.
     any_synthetic = any(item["synthetic"] for item in latest_only)
     any_ungated = any(not item["release_gate_passed"] for item in latest_only)
-    write_json(staging / "cycles.json", summaries)
+    write_json(staging / "cycles.json", public_summaries)
     write_json(staging / "initializations.json", initializations)
     write_json(
         staging / "status.json",
         {
             "version": "0.1.0",
             "generated_at_utc": now.isoformat(),
-            "cycles": len(summaries),
+            "cycles": len(public_summaries),
             "cycles_latest_initialization": len(latest_only),
             "initializations": len(initializations),
             "keep_initializations": max(1, int(keep_initializations)),
             "archive_base_url": archive_base_url or None,
+            "archive_view": False,
             "operational": not (any_synthetic or any_ungated),
             "shadow_mode": bool(any_ungated and not any_synthetic),
             "any_synthetic": any_synthetic,
             "any_ungated": any_ungated,
             "banner": banner(any_synthetic, any_ungated),
-            "latest": (latest_only or summaries)[0],
+            "latest": (latest_only or public_summaries or summaries)[0],
         },
     )
 
@@ -646,6 +716,16 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
             "reason": "The archive has not been refreshed with fetch-nhc-tracks.",
             "tracks": [],
         })
+
+    # WeatherNext cyclone tracks are refreshed independently from county-risk
+    # exports, just like the NHC overlay. Preserve the last successful refresh
+    # unless the incoming product archive carries a newer one.
+    wn_tracks = archive / "weathernext-active-tracks.json"
+    existing_wn = output / "weathernext-active-tracks.json"
+    if wn_tracks.exists():
+        shutil.copyfile(wn_tracks, staging / "weathernext-active-tracks.json")
+    elif existing_wn.exists():
+        shutil.copyfile(existing_wn, staging / "weathernext-active-tracks.json")
 
     # PowerOutage.us credentials and licensing must stay behind a server-side
     # integration.  A public GitHub Pages bundle must never contain an API
@@ -673,6 +753,12 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
                            quantize_geojson(json.loads(existing_basemap.read_bytes())))
     else:
         write_json(staging / "basemap.geojson", {"type": "FeatureCollection", "features": []})
+
+    if archive_output is not None:
+        _write_archive_dashboard(archive_output, summaries, staging, now)
+        # The archive dashboard now owns copies of any historical geometry.
+        # Keep the live checkout limited to geometry referenced by live cycles.
+        _discard_unreferenced_geometries(public_summaries, staging)
     return summaries
 
 

@@ -118,6 +118,18 @@ def test_archive_without_basemap_keeps_existing_site_basemap(tmp_path: Path) -> 
     assert (output / "basemap.geojson").read_text() == rich_basemap
 
 
+def test_export_preserves_independently_refreshed_weathernext_tracks(tmp_path: Path) -> None:
+    archive = _init_archive(tmp_path / "products", [0])
+    output = tmp_path / "site-data"
+    output.mkdir()
+    tracks = '{"available":true,"tracks":[{"name":"Test"}]}\n'
+    (output / "weathernext-active-tracks.json").write_text(tracks)
+
+    export_archive(archive, output)
+
+    assert (output / "weathernext-active-tracks.json").read_text() == tracks
+
+
 def test_failed_export_preserves_previous_snapshot(tmp_path: Path) -> None:
     archive = tmp_path / "bad-products"
     cycle = archive / "20260101T0000Z"
@@ -387,18 +399,27 @@ def test_archived_payloads_move_out_of_the_site_repository(tmp_path: Path) -> No
     in_store = sorted(p.name for p in (store / "cycles").iterdir())
     assert in_store == sorted(s["cycle_id"] for s in older)
 
-    # The index still lists every run, and archived entries say where to fetch.
+    # The live index lists only current runs. The archive has its own index and
+    # full dashboard shell, and archived entries say where to fetch payloads.
     assert all(s.get("data_base") is None for s in latest)
     assert {s["data_base"] for s in older} == {"https://example.github.io/w2g-archive"}
+    assert json.loads((output / "cycles.json").read_text()) == latest
+    archived_index = json.loads((store / "data" / "cycles.json").read_text())
+    assert {s["cycle_id"] for s in archived_index} == {
+        s["cycle_id"] for s in older}
+    assert all(not s["is_latest_initialization"] for s in archived_index)
+    assert json.loads((store / "data" / "status.json").read_text())["archive_view"] is True
+    assert (store / "index.html").is_file()
+    assert (store / "assets" / "app.js").is_file()
     for summary in older:
         assert (store / "cycles" / summary["cycle_id"] / "counties.json").is_file()
 
-    # Geometry is shared and deliberately NOT relocated: one copy stays beside
-    # the site and archived cycles point back at it.
+    # Each dashboard carries only the geometry needed by its own index.
     assert (output / "geometries").is_dir()
-    assert not (store / "geometries").exists()
-    for summary in summaries:
+    for summary in latest:
         assert (output / summary["geometry_path"]).is_file()
+    for summary in older:
+        assert (store / "data" / summary["geometry_path"]).is_file()
 
     status = json.loads((output / "status.json").read_text())
     assert status["archive_base_url"] == "https://example.github.io/w2g-archive/"
