@@ -45,7 +45,8 @@ const VERIFICATION_LAYERS = [
 
 const PROVIDERS = [
   { id: 'hrrr', label: 'NOAA HRRR via AWS Open Data', match: (s) => s.startsWith('hrrr') },
-  { id: 'weathernext2', label: 'Google DeepMind WeatherNext 2', match: (s) => s.startsWith('weathernext') },
+  { id: 'weathernext3', label: 'Google DeepMind WeatherNext 3', match: (s) => s.startsWith('weathernext3') || s.startsWith('wn3') },
+  { id: 'weathernext2', label: 'Google DeepMind WeatherNext 2', match: (s) => s.startsWith('weathernext2') || s.startsWith('weathernext') || s.startsWith('wn2') },
   { id: 'gfs', label: 'NOAA GFS / GEFS', match: (s) => s.startsWith('gfs') || s.startsWith('gefs') },
   // Hindcasts are their own source, not a variant of a forecast provider.
   // Keeping them separate is what stops a verification run appearing in a
@@ -472,7 +473,7 @@ function buildCycleDots() {
   $('cycle-dots').innerHTML = frames.map((frame, i) => {
     const c = S.cycles[frame.cycleIndex];
     const prov = providerFor(c.hazard_source);
-    const short = prov.id === 'hrrr' ? 'HRRR' : prov.id === 'weathernext2' ? 'WN2' : 'Forecast';
+    const short = prov.id === 'hrrr' ? 'HRRR' : prov.id === 'weathernext3' ? 'WN3' : prov.id === 'weathernext2' ? 'WN2' : 'Forecast';
     const lead = frame.trackIndex != null ? S.track.points[frame.trackIndex].lead_hours : c.lead_hours;
     const desc = `${short}: ${c.event_name || c.cycle_id} · lead +${lead || 0}h`;
     return `<i class="${i === position ? 'active' : ''}" title="${esc(desc)}"></i>`;
@@ -609,6 +610,7 @@ function updateCycleChrome() {
     (cycle.meta && cycle.meta.hazard_source) || cycle.hazard_source || ''
   ).startsWith('hindcast');
   const shortProv = prov.id === 'hrrr' ? 'NOAA HRRR'
+    : prov.id === 'weathernext3' ? 'WeatherNext 3'
     : prov.id === 'weathernext2' ? 'WeatherNext 2'
     : isHindcastSource ? 'Hindcast'
     : 'Forecast';
@@ -1906,7 +1908,7 @@ function drawKpis() {
 function providerTargetIndex(providerId) {
   const indices = providerFrameIndices(providerId);
   if (!indices.length) return null;
-  if (providerId === 'weathernext2') return indices[0];
+  if (providerId === 'weathernext3' || providerId === 'weathernext2') return indices[0];
   return indices.slice().sort((a, b) => {
     const A = S.cycles[a], B = S.cycles[b];
     const ta = Date.parse(A.issued_utc) || 0, tb = Date.parse(B.issued_utc) || 0;
@@ -2031,7 +2033,7 @@ function drawSourceSwitch() {
     btn.type = 'button';
     btn.setAttribute('role', 'tab');
     btn.setAttribute('aria-selected', String(id === S.activeProvider));
-    const short = id === 'hrrr' ? 'NOAA HRRR' : id === 'weathernext2' ? 'WeatherNext 2' : provider.label;
+    const short = id === 'hrrr' ? 'NOAA HRRR' : id === 'weathernext3' ? 'WeatherNext 3' : id === 'weathernext2' ? 'WeatherNext 2' : provider.label;
     btn.innerHTML = `<b>${esc(short)}</b><span>${esc(providerCoverage(id))}</span>`;
     btn.title = `Switch to ${provider.label}`;
     btn.addEventListener('click', () => {

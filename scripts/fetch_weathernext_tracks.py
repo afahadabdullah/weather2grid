@@ -92,21 +92,25 @@ def parse_iso_or_date(val: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def resolve_weathernext_init(init_arg: str, site_data_dir: Path) -> tuple[datetime, str]:
+def resolve_weathernext_init(init_arg: str, site_data_dir: Path, version: int = 2) -> tuple[datetime, str]:
     """Resolve WeatherNext initialization datetime and cycle matching pattern."""
+    tag = f"_wn{version}"
+    source_prefix = f"weathernext{version}"
     if init_arg.strip().lower() == "latest":
         # 1. Check initializations.json
         inits_file = site_data_dir / "initializations.json"
         if inits_file.is_file():
             try:
                 items = json.loads(inits_file.read_text(encoding="utf-8"))
-                wn_items = [item for item in items if str(item.get("hazard_source", "")).startswith("weathernext")]
+                wn_items = [item for item in items if str(item.get("hazard_source", "")).startswith(source_prefix)]
+                if not wn_items and version == 2:
+                    wn_items = [item for item in items if str(item.get("hazard_source", "")).startswith("weathernext")]
                 if wn_items:
                     latest_item = next((item for item in wn_items if item.get("is_latest_initialization")), wn_items[0])
                     issued = latest_item.get("issued_utc")
                     if issued:
                         dt = parse_iso_or_date(issued)
-                        return dt, dt.strftime("%Y%m%dT%H%MZ") + "_wn2"
+                        return dt, dt.strftime("%Y%m%dT%H%MZ") + tag
             except Exception:
                 pass
 
@@ -115,56 +119,58 @@ def resolve_weathernext_init(init_arg: str, site_data_dir: Path) -> tuple[dateti
         if cycles_file.is_file():
             try:
                 cycles = json.loads(cycles_file.read_text(encoding="utf-8"))
-                wn_cycles = [c for c in cycles if str(c.get("hazard_source", "")).startswith("weathernext")]
+                wn_cycles = [c for c in cycles if str(c.get("hazard_source", "")).startswith(source_prefix)]
+                if not wn_cycles and version == 2:
+                    wn_cycles = [c for c in cycles if str(c.get("hazard_source", "")).startswith("weathernext")]
                 if wn_cycles:
                     issued = wn_cycles[0].get("issued_utc")
                     if issued:
                         dt = parse_iso_or_date(issued)
-                        return dt, dt.strftime("%Y%m%dT%H%MZ") + "_wn2"
+                        return dt, dt.strftime("%Y%m%dT%H%MZ") + tag
             except Exception:
                 pass
 
         # 3. Check cycles directory
         cycles_dir = site_data_dir / "cycles"
         if cycles_dir.is_dir():
-            wn_dirs = sorted(cycles_dir.glob("*_wn2*"), reverse=True)
+            wn_dirs = sorted(cycles_dir.glob(f"*{tag}*"), reverse=True)
             if wn_dirs:
                 prefix = wn_dirs[0].name.split("_")[0]
                 try:
                     dt = datetime.strptime(prefix, "%Y%m%dT%H%MZ").replace(tzinfo=timezone.utc)
-                    return dt, prefix + "_wn2"
+                    return dt, prefix + tag
                 except Exception:
                     pass
 
         # Fallback
         dt = datetime(2026, 9, 3, 6, 0, tzinfo=timezone.utc)
-        return dt, dt.strftime("%Y%m%dT%H%MZ") + "_wn2"
+        return dt, dt.strftime("%Y%m%dT%H%MZ") + tag
 
     # Explicit init string provided
     dt = parse_iso_or_date(init_arg)
     has_time = "T" in init_arg or ":" in init_arg
     if has_time:
-        prefix = dt.strftime("%Y%m%dT%H%MZ") + "_wn2"
+        prefix = dt.strftime("%Y%m%dT%H%MZ") + tag
     else:
         cycles_dir = site_data_dir / "cycles"
         date_str = dt.strftime("%Y%m%d")
-        matching = sorted(cycles_dir.glob(f"{date_str}T*_wn2*")) if cycles_dir.is_dir() else []
+        matching = sorted(cycles_dir.glob(f"{date_str}T*{tag}*")) if cycles_dir.is_dir() else []
         if matching:
             cycle_prefix = matching[0].name.split("_")[0]
             try:
                 dt = datetime.strptime(cycle_prefix, "%Y%m%dT%H%MZ").replace(tzinfo=timezone.utc)
             except Exception:
                 pass
-            prefix = cycle_prefix + "_wn2"
+            prefix = cycle_prefix + tag
         else:
-            prefix = dt.strftime("%Y%m%dT0000Z") + "_wn2"
+            prefix = dt.strftime("%Y%m%dT0000Z") + tag
     return dt, prefix
 
 
-def generate_weathernext_marie_track(init_dt: datetime | None = None) -> dict[str, Any]:
-    """Generate the WeatherNext 2 ensemble track for Hurricane Marie (EP132026).
+def generate_weathernext_marie_track(init_dt: datetime | None = None, version: int = 2) -> dict[str, Any]:
+    """Generate the WeatherNext ensemble track for Hurricane Marie (EP132026).
     
-    Initialized with 6-hourly fixes matching the 25 rolling WeatherNext 2 forecast windows (leads 6h to 168h).
+    Initialized with 6-hourly fixes matching the 25 rolling WeatherNext forecast windows (leads 6h to 168h).
     """
     raw_fixes = [
         # (lead_h, lat, lon, vmax_kt, pmin_hpa, r34_nm, r50_nm, r64_nm, stage)
@@ -217,14 +223,18 @@ def generate_weathernext_marie_track(init_dt: datetime | None = None) -> dict[st
             "stage": stage,
         })
 
+    model_label = f"WeatherNext {version} / Cyclones"
+    source_label = f"Google DeepMind WeatherNext {version} Cyclones (AI Ensemble)"
+    classification = f"AI Tropical Cyclone Track Forecast ({'0.1°' if version == 3 else '0.25°'})"
+
     return {
         "available": True,
-        "source": "Google DeepMind WeatherNext Cyclones (AI Ensemble)",
-        "classification": "AI Tropical Cyclone Track Forecast",
+        "source": source_label,
+        "classification": classification,
         "storm_id": "ep132026",
         "name": "Hurricane Marie (WeatherNext AI)",
         "basin": "EP",
-        "model": "WeatherNext 2 / Cyclones",
+        "model": model_label,
         "init_time_utc": init_dt.isoformat(),
         "advisory_issued_utc": init_dt.isoformat(),
         "current_index": 0,
@@ -234,6 +244,8 @@ def generate_weathernext_marie_track(init_dt: datetime | None = None) -> dict[st
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", type=int, choices=[2, 3], default=2,
+                        help="WeatherNext model version (2 or 3, default: 2)")
     parser.add_argument("--init", default="latest",
                         help="WeatherNext initialization (default: 'latest', or e.g. '2026-08-31', '2026-08-31T12:00:00Z')")
     parser.add_argument("--atcf", type=Path, help="Optional ATCF format track file")
@@ -243,16 +255,16 @@ def main() -> None:
     args = parser.parse_args()
 
     site_data_dir = args.output.parent
-    init_dt, cycle_prefix = resolve_weathernext_init(args.init, site_data_dir)
-    print(f"Targeting WeatherNext initialization: {init_dt.isoformat()} (pattern: {cycle_prefix}*)")
+    init_dt, cycle_prefix = resolve_weathernext_init(args.init, site_data_dir, version=args.version)
+    print(f"Targeting WeatherNext {args.version} initialization: {init_dt.isoformat()} (pattern: {cycle_prefix}*)")
 
     if args.atcf and args.atcf.exists():
         data = parse_atcf_file(args.atcf)
     else:
-        track = generate_weathernext_marie_track(init_dt)
+        track = generate_weathernext_marie_track(init_dt, version=args.version)
         data = {
             "available": True,
-            "source": "Google DeepMind WeatherNext Cyclones (AI Ensemble)",
+            "source": f"Google DeepMind WeatherNext {args.version} Cyclones (AI Ensemble)",
             "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
             "tracks": [track],
         }
