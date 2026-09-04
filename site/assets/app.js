@@ -2046,12 +2046,21 @@ function selectAvailableRun(run) {
   if (target != null) loadCycle(target);
 }
 
+// The context bar exists only to hold these two pickers, so it is never
+// shown on its own: it mirrors whichever of them currently has content.
+function syncContextBar() {
+  const bar = $('context-bar');
+  if (!bar) return;
+  const run = $('run-picker'), init = $('init-picker');
+  bar.hidden = (!run || run.hidden) && (!init || init.hidden);
+}
+
 function drawRunPicker() {
   const picker = $('run-picker'), menu = $('run-menu'), label = $('run-label');
   if (!picker || !menu || !label) return;
   const runs = availableRuns();
   picker.hidden = !S.archiveMode || runs.length < 2;
-  if (picker.hidden) { closeRunMenu(); return; }
+  if (picker.hidden) { closeRunMenu(); syncContextBar(); return; }
 
   label.textContent = 'Archived runs';
 
@@ -2106,7 +2115,7 @@ function drawRunPicker() {
     children.push(groupHeading('Hindcast verification \u2014 scored against observed outages'),
                   ...hindcasts.map(runRow));
   }
-  menu.replaceChildren(...children);
+  menu.replaceChildren(...children);  syncContextBar();
 }
 
 function selectInitialization(issued) {
@@ -2130,7 +2139,7 @@ function drawInitPicker() {
   // One initialization is not a choice; hide the control rather than offer a
   // menu with a single disabled row.
   picker.hidden = list.length < 2;
-  if (picker.hidden) { closeInitMenu(); return; }
+  if (picker.hidden) { closeInitMenu(); syncContextBar(); return; }
 
   const active = activeInitialization();
   const hindcast = Boolean(active && active.kind === 'hindcast');
@@ -2179,7 +2188,7 @@ function drawInitPicker() {
     button.addEventListener('click', () => selectInitialization(entry.issued));
     return button;
   });
-  menu.replaceChildren(heading, ...rows);
+  menu.replaceChildren(heading, ...rows);  syncContextBar();
 }
 
 function drawSourceSwitch() {
