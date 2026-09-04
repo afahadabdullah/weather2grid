@@ -975,8 +975,8 @@ function projectMapGeometry() {
   } else if (S.view === 'event') {
     // Event view is anchored to the county footprint
     b = [...countyBounds];
-    if (storm && storm.track && S.overlays.track) {
-      const nearPts = storm.track.filter(isNearConus);
+    if (currentStorm && currentStorm.track && S.overlays.track) {
+      const nearPts = currentStorm.track.filter(isNearConus);
       nearPts.forEach((pt) => {
         const [px, py] = proj(pt.lon, pt.lat);
         const r = Math.max(0, pt.uncertainty_km || 0) / 6371;
