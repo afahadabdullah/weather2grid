@@ -1,7 +1,7 @@
 {
   "cycle_id": "20260903T0600Z_wn2x-conus-20260903-h096",
   "event_id": "wn2x-conus-20260903-h096",
-  "event_name": "CONUS wind outlook — 24 h to +96 h (rolling)",
+  "event_name": "CONUS wind outlook \u2014 24 h to +96 h (rolling)",
   "issued_utc": "2026-09-03T06:00:00+00:00",
   "lead_hours": 78.0,
   "age_hours": 13.27,
@@ -35,7 +35,7 @@
   "county_data_format": "w2g-columnar-v1",
   "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
   "geometry_path": "geometries/7ebea388907d8fd8.geojson",
-  "track_available": false,
+  "track_available": true,
   "fields": {
     "required": [
       "county_fips",
@@ -128,7 +128,7 @@
     "windows_overlap": true,
     "cycle_id": "20260903T0600Z_wn2x-conus-20260903-h096",
     "product_provenance_hash": "a9243c7e8f3425ef3511cbe3c579cfef",
-    "event_name": "CONUS wind outlook — 24 h to +96 h (rolling)",
+    "event_name": "CONUS wind outlook \u2014 24 h to +96 h (rolling)",
     "training_event_exclusions": [
       "OT20251228a36ecc"
     ],

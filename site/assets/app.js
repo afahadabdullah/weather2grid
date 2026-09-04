@@ -8,7 +8,7 @@
 
 const S = {
   cycles: [], idx: 0, cycle: null, counties: [], geo: null,
-  basemap: null, track: null, nhcTracks: [], outageStatus: null,
+  basemap: null, track: null, nhcTracks: [], wnTracks: [], outageStatus: null,
   byFips: new Map(), layer: 'peak_gust_ms', ratio: 0.15,
   triggered: new Set(), selected: null, hoveredFips: null,
   playing: false, timer: null, loop: true, loadToken: 0, curve: null, trackFrame: null,
@@ -271,16 +271,18 @@ async function boot() {
   const status = await cachedJson('data/status.json');
   showBanner(status.banner);
 
-  const [cycles, basemap, nhc, outageStatus] = await Promise.all([
+  const [cycles, basemap, nhc, wn, outageStatus] = await Promise.all([
     cachedJson('data/cycles.json'),
     cachedJson('data/basemap.geojson'),
     cachedJson('data/nhc-active-tracks.json').catch(() => null),
+    cachedJson('data/weathernext-active-tracks.json').catch(() => null),
     cachedJson('data/live-outage-status.json').catch(() => null),
   ]);
 
   S.cycles = cycles;
   S.basemap = basemap;
   S.nhcTracks = nhc && nhc.available && Array.isArray(nhc.tracks) ? nhc.tracks : [];
+  S.wnTracks = wn && wn.available && Array.isArray(wn.tracks) ? wn.tracks : [];
   S.outageStatus = outageStatus;
 
   if (!S.cycles.length) {
@@ -929,10 +931,22 @@ function projectMapGeometry() {
   }
 
   // Determine view bounds
-  const storm = stormMeta();
-  const officialStorms = (S.nhcTracks || []).map((item) => stormMeta(item, null)).filter(Boolean)
-    .filter((item) => !storm || item.stormId !== storm.stormId);
-  const visibleStorms = [...(storm ? [storm] : []), ...officialStorms];
+  const currentStorm = stormMeta();
+  const nhcStorms = (S.nhcTracks || []).map((item) => stormMeta(item, null)).filter(Boolean);
+  const wnStorms = (S.wnTracks || []).map((item) => stormMeta(item, null)).filter(Boolean);
+  const rawList = [];
+  if (currentStorm) rawList.push(currentStorm);
+  nhcStorms.forEach((st) => {
+    if (!rawList.some((existing) => existing.stormId === st.stormId && existing.trackSourceKind === st.trackSourceKind)) {
+      rawList.push(st);
+    }
+  });
+  wnStorms.forEach((st) => {
+    if (!rawList.some((existing) => existing.stormId === st.stormId && existing.trackSourceKind === st.trackSourceKind)) {
+      rawList.push(st);
+    }
+  });
+  const visibleStorms = rawList;
 
   // Restrict storm bounding to CONUS operational theater (Lon: -128°W to -64°W, Lat: 16°N to 54°N)
   // Prevents far-away open Pacific (Hawaii) or deep Atlantic storms from shifting CONUS to the side!
@@ -1182,11 +1196,25 @@ const WIND_TIER_STYLE = {
 };
 
 function drawStormCanvas(ctx, zoom) {
-  const storm = stormMeta();
-  const officialStorms = S.nhcTracks.map((item) => stormMeta(item, null)).filter(Boolean)
-    .filter((item) => !storm || item.stormId !== storm.stormId);
-  const visibleStorms = [...(storm ? [storm] : []), ...officialStorms];
+  const currentStorm = stormMeta();
+  const nhcStorms = (S.nhcTracks || []).map((item) => stormMeta(item, null)).filter(Boolean);
+  const wnStorms = (S.wnTracks || []).map((item) => stormMeta(item, null)).filter(Boolean);
 
+  // Combine tracks without dropping duplicates across different models
+  const rawList = [];
+  if (currentStorm) rawList.push(currentStorm);
+  nhcStorms.forEach((st) => {
+    if (!rawList.some((existing) => existing.stormId === st.stormId && existing.trackSourceKind === st.trackSourceKind)) {
+      rawList.push(st);
+    }
+  });
+  wnStorms.forEach((st) => {
+    if (!rawList.some((existing) => existing.stormId === st.stormId && existing.trackSourceKind === st.trackSourceKind)) {
+      rawList.push(st);
+    }
+  });
+
+  const visibleStorms = rawList;
   if (!visibleStorms.length || !S.mapScreen) return;
 
   for (const st of visibleStorms) {
@@ -1195,6 +1223,7 @@ function drawStormCanvas(ctx, zoom) {
     const points = validPts.map((pt) => ({ ...pt, xy: S.mapScreen(pt.lon, pt.lat) }));
     const currentIdx = Math.max(0, points.findIndex((pt) => pt.selected));
     const current = points[currentIdx] || points[0];
+    const isWn = Boolean(st.isAiEnsemble || st.trackSourceKind === 'weathernext');
 
     // Uncertainty Cone
     if (S.overlays.track && points.length > 1) {
@@ -1214,31 +1243,32 @@ function drawStormCanvas(ctx, zoom) {
         const cone = [...left, ...right.reverse()];
         cone.forEach((p, i) => { if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
         ctx.closePath();
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.fillStyle = isWn ? 'rgba(168, 85, 247, 0.09)' : 'rgba(255, 255, 255, 0.08)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.strokeStyle = isWn ? 'rgba(192, 132, 252, 0.45)' : 'rgba(255, 255, 255, 0.35)';
         ctx.lineWidth = 1 / zoom;
-        ctx.setLineDash([4 / zoom, 4 / zoom]);
+        ctx.setLineDash(isWn ? [6 / zoom, 3 / zoom] : [4 / zoom, 4 / zoom]);
         ctx.stroke();
         ctx.restore();
 
-        // Future Track
+        // Future Track Line
         ctx.save();
         ctx.beginPath();
         future.forEach((pt, i) => { if (i === 0) ctx.moveTo(pt.xy[0], pt.xy[1]); else ctx.lineTo(pt.xy[0], pt.xy[1]); });
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2.2 / zoom;
+        ctx.strokeStyle = isWn ? '#c084fc' : '#ffffff';
+        ctx.lineWidth = (isWn ? 2.6 : 2.2) / zoom;
+        if (isWn) ctx.setLineDash([8 / zoom, 4 / zoom]);
         ctx.stroke();
         ctx.restore();
       }
 
-      // Past Track
+      // Past Track Line
       const past = points.slice(0, currentIdx + 1);
       if (past.length > 1) {
         ctx.save();
         ctx.beginPath();
         past.forEach((pt, i) => { if (i === 0) ctx.moveTo(pt.xy[0], pt.xy[1]); else ctx.lineTo(pt.xy[0], pt.xy[1]); });
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.strokeStyle = isWn ? 'rgba(192, 132, 252, 0.55)' : 'rgba(255, 255, 255, 0.45)';
         ctx.lineWidth = 1.4 / zoom;
         ctx.stroke();
         ctx.restore();
@@ -1298,39 +1328,58 @@ function drawStormCanvas(ctx, zoom) {
       points.forEach((pt, i) => {
         const isCur = pt.selected;
         const tier = stormTier(pt.raw && pt.raw.vmax_kt != null ? pt.raw.vmax_kt : null, st.isCyclone);
+        const centerColor = isWn ? '#c084fc' : tier.color;
+
         if (isCur) {
-          // Center Marker
+          // Glow / Pulse Circle
           ctx.save();
           ctx.beginPath();
           ctx.arc(pt.xy[0], pt.xy[1], 16 / zoom, 0, Math.PI * 2);
-          ctx.fillStyle = tier.color;
-          ctx.globalAlpha = 0.22;
+          ctx.fillStyle = centerColor;
+          ctx.globalAlpha = 0.26;
           ctx.fill();
           ctx.restore();
 
-          // Glyph circle
+          // Glyph Circle
           ctx.save();
           ctx.beginPath();
           ctx.arc(pt.xy[0], pt.xy[1], 10 / zoom, 0, Math.PI * 2);
           ctx.fillStyle = '#071018';
           ctx.fill();
-          ctx.strokeStyle = tier.color;
+          ctx.strokeStyle = centerColor;
           ctx.lineWidth = 2 / zoom;
           ctx.stroke();
 
-          // Text label
-          ctx.fillStyle = tier.color;
+          // Text label inside glyph
+          ctx.fillStyle = centerColor;
           ctx.font = `bold ${Math.round(11 / zoom)}px ${S.fontSans || 'sans-serif'}`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(st.isCyclone ? (tier.cat ? `C${tier.cat}` : 'TS') : 'L', pt.xy[0], pt.xy[1]);
+          ctx.restore();
+
+          // Model Badge (e.g. "WN2 AI" vs "NHC") above center
+          ctx.save();
+          const badgeText = isWn ? 'WN2 AI' : 'NHC';
+          ctx.font = `bold ${Math.round(8.5 / zoom)}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          const tagY = pt.xy[1] - 13 / zoom;
+          ctx.fillStyle = '#071018';
+          const textW = ctx.measureText(badgeText).width;
+          ctx.fillRect(pt.xy[0] - textW / 2 - 3 / zoom, tagY - 10 / zoom, textW + 6 / zoom, 11 / zoom);
+          ctx.strokeStyle = centerColor;
+          ctx.lineWidth = 1 / zoom;
+          ctx.strokeRect(pt.xy[0] - textW / 2 - 3 / zoom, tagY - 10 / zoom, textW + 6 / zoom, 11 / zoom);
+          ctx.fillStyle = centerColor;
+          ctx.fillText(badgeText, pt.xy[0], tagY);
           ctx.restore();
         } else {
           ctx.save();
           ctx.beginPath();
           const r = (i < currentIdx ? 3.2 : 4) / zoom;
           ctx.arc(pt.xy[0], pt.xy[1], r, 0, Math.PI * 2);
-          ctx.fillStyle = i < currentIdx ? '#64748b' : tier.color;
+          ctx.fillStyle = i < currentIdx ? '#64748b' : centerColor;
           ctx.fill();
           ctx.strokeStyle = '#071018';
           ctx.lineWidth = 1 / zoom;
@@ -1342,7 +1391,7 @@ function drawStormCanvas(ctx, zoom) {
         if (pt.lead_hours >= 0) {
           ctx.save();
           ctx.font = `bold ${Math.round(9 / zoom)}px sans-serif`;
-          ctx.fillStyle = '#ffffff';
+          ctx.fillStyle = isWn ? '#e9d5ff' : '#ffffff';
           ctx.strokeStyle = '#071018';
           ctx.lineWidth = 2.5 / zoom;
           ctx.strokeText(`+${pt.lead_hours}h`, pt.xy[0] + 10 / zoom, pt.xy[1] - 8 / zoom);
@@ -1374,11 +1423,62 @@ function stormTier(vmaxKt, isCyclone = true) {
   return { cat, color, label: `Category ${cat}` };
 }
 
+function matchTrackIndexToCycle(trackSource, cycle) {
+  if (!trackSource || !Array.isArray(trackSource.points) || !trackSource.points.length) return 0;
+  if (!cycle) return Number(trackSource.current_index || 0);
+
+  const meta = cycle.meta || {};
+  const targetIso = meta.valid_start_utc || cycle.valid_start_utc || null;
+  const targetMs = targetIso ? Date.parse(targetIso) : (Date.parse(cycle.issued_utc) + Number(cycle.lead_hours || 0) * 36e5);
+
+  if (Number.isFinite(targetMs)) {
+    let bestIdx = -1, bestDiff = Infinity;
+    trackSource.points.forEach((pt, idx) => {
+      let ptMs = NaN;
+      if (pt.valid_iso) ptMs = Date.parse(pt.valid_iso);
+      else if (pt.valid_utc && /^\d{2}\/\d{4}$/.test(pt.valid_utc) && cycle.issued_utc) {
+        const issueDate = new Date(cycle.issued_utc);
+        const day = parseInt(pt.valid_utc.slice(0, 2), 10);
+        const hour = parseInt(pt.valid_utc.slice(3, 5), 10);
+        const min = parseInt(pt.valid_utc.slice(5, 7), 10);
+        const d = new Date(Date.UTC(issueDate.getUTCFullYear(), issueDate.getUTCMonth(), day, hour, min, 0));
+        ptMs = d.getTime();
+      }
+      if (Number.isFinite(ptMs)) {
+        const diff = Math.abs(ptMs - targetMs);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          bestIdx = idx;
+        }
+      }
+    });
+    if (bestIdx >= 0 && bestDiff <= 12 * 36e5) return bestIdx;
+  }
+
+  const cycleLead = cycle.lead_hours != null ? Number(cycle.lead_hours)
+    : meta.forecast_horizon_hours != null ? Number(meta.forecast_horizon_hours) : null;
+  if (cycleLead != null) {
+    let bestIdx = -1, bestDiff = Infinity;
+    trackSource.points.forEach((pt, idx) => {
+      if (pt.lead_hours != null) {
+        const diff = Math.abs(Number(pt.lead_hours) - cycleLead);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          bestIdx = idx;
+        }
+      }
+    });
+    if (bestIdx >= 0 && bestDiff <= 12) return bestIdx;
+  }
+
+  return Number(trackSource.current_index || 0);
+}
+
 function stormMeta(trackSource = S.track, selectedFrame = S.trackFrame) {
   if (!trackSource || !Array.isArray(trackSource.points) || !trackSource.points.length) return null;
   const currentIndex = Math.max(0, Math.min(
     trackSource.points.length - 1,
-    selectedFrame == null ? Number(trackSource.current_index || 0) : selectedFrame
+    selectedFrame == null ? matchTrackIndexToCycle(trackSource, S.cycle) : selectedFrame
   ));
   const current = trackSource.points[currentIndex];
   const coneByLead = trackSource.cone_radius_nm_by_lead || {};
@@ -1397,15 +1497,20 @@ function stormMeta(trackSource = S.track, selectedFrame = S.trackFrame) {
   const classification = trackSource.classification || current.stage || '';
   const isCyclone = /tropical|cyclone|hurricane|typhoon|depression/i.test(classification)
     || /nhc|atcf/i.test(String(trackSource.source || ''));
+  const isAiEnsemble = /weathernext|deepmind|ensemble/i.test(String(trackSource.source || trackSource.model || ''));
   return {
     classification,
     isCyclone,
+    isAiEnsemble,
+    trackSourceKind: isAiEnsemble ? 'weathernext' : 'official',
     category: isCyclone ? stormCategory(current.vmax_kt) : null,
     center_lat: current.lat, center_lon: current.lon,
     max_wind_ms: current.vmax_kt * .514444, max_wind_kt: current.vmax_kt,
     min_pressure_hpa: current.pmin_mb,
     wind_radii_km: { '34kt': current.r34_nm * 1.852, '50kt': current.r50_nm * 1.852, '64kt': current.r64_nm * 1.852 },
     currentIndex, track: points, stormId: trackSource.storm_id || trackSource.name || '',
+    name: trackSource.name || 'Cyclone',
+    sourceLabel: trackSource.source || (isAiEnsemble ? 'Google DeepMind WeatherNext' : 'NOAA NHC Official Advisory'),
     windRadiiGeojson: trackSource.wind_radii_geojson || null,
   };
 }
@@ -1975,7 +2080,22 @@ function drawSourceStack() {
     return row;
   });
 
-  if (S.nhcTracks.length) {
+  if (S.wnTracks && S.wnTracks.length) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'source-row active';
+    row.title = 'Show Google DeepMind WeatherNext AI ensemble cyclone tracks.';
+    row.innerHTML = `<span><i></i><b>WeatherNext AI Cyclones</b></span><em>${S.wnTracks.length} active track${S.wnTracks.length === 1 ? '' : 's'}</em>`;
+    row.addEventListener('click', () => {
+      S.view = 'storm';
+      document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === 'storm')));
+      projectMapGeometry();
+      requestMapRedraw();
+    });
+    rows.push(row);
+  }
+
+  if (S.nhcTracks && S.nhcTracks.length) {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'source-row active';
@@ -2016,10 +2136,14 @@ function drawForecast() {
     return;
   }
 
+  const trackObj = S.track || (S.wnTracks && S.wnTracks[0]) || (S.nhcTracks && S.nhcTracks[0]) || {};
+  const currentPt = (storm.track && storm.track[storm.currentIndex]) || {};
+  const curLead = currentPt.lead_hours != null ? currentPt.lead_hours : (S.cycle.lead_hours || 0);
+
   $('storm-symbol').className = `storm-symbol${storm.isCyclone ? '' : ' low'}`;
   $('storm-symbol').innerHTML = `<b>${storm.isCyclone ? (storm.category ? `C${storm.category}` : 'TS') : 'L'}</b>`;
   $('storm-class').textContent = `${storm.classification || 'Tropical cyclone'}${storm.category != null ? ` · Category ${storm.category}` : ''}`;
-  $('storm-name').textContent = `${S.track.name || S.cycle.event_name} · ${S.track.storm_id || 'track supplied'}`;
+  $('storm-name').textContent = `${storm.name || trackObj.name || S.cycle.event_name} · ${storm.stormId || 'track supplied'}`;
   $('storm-stats').innerHTML = `
     <div><b>${Number(storm.center_lat).toFixed(1)}°N, ${Math.abs(storm.center_lon).toFixed(1)}°W</b><span>Fix Center</span></div>
     <div><b>${storm.max_wind_kt || '—'} kt</b><span>Maximum Wind</span></div>
@@ -2029,8 +2153,8 @@ function drawForecast() {
   const chip = $('storm-chip');
   chip.hidden = false;
   chip.innerHTML = storm.isCyclone
-    ? `<b>${esc(storm.classification || 'Cyclone')}${storm.category ? ` · Cat ${storm.category}` : ''}</b><span>Selected +${S.track.points[storm.currentIndex].lead_hours}h · ${storm.max_wind_kt || '—'} kt · ${storm.min_pressure_hpa || '—'} hPa</span>`
-    : `<b>Inland surface low</b><span>Selected +${S.track.points[storm.currentIndex].lead_hours}h · no ocean radii</span>`;
+    ? `<b>${esc(storm.classification || 'Cyclone')}${storm.category ? ` · Cat ${storm.category}` : ''}</b><span>Fix +${curLead}h · ${storm.max_wind_kt || '—'} kt · ${storm.min_pressure_hpa || '—'} hPa</span>`
+    : `<b>Inland surface low</b><span>Fix +${curLead}h · no ocean radii</span>`;
 }
 
 function drawTail() {
