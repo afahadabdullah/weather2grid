@@ -77,11 +77,94 @@ def parse_atcf_file(path: Path) -> dict[str, Any]:
     return {"available": bool(tracks_by_id), "tracks": list(tracks_by_id.values())}
 
 
-def generate_weathernext_marie_track() -> dict[str, Any]:
+def parse_iso_or_date(val: str) -> datetime:
+    val = val.strip()
+    if val.endswith("Z"):
+        val = val[:-1] + "+00:00"
+    if "T" in val or ":" in val:
+        dt = datetime.fromisoformat(val)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    # Plain date: YYYY-MM-DD or YYYYMMDD
+    clean_date = val.replace("-", "")
+    if len(clean_date) == 8 and clean_date.isdigit():
+        return datetime(int(clean_date[:4]), int(clean_date[4:6]), int(clean_date[6:8]), tzinfo=timezone.utc)
+    dt = datetime.fromisoformat(val)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def resolve_weathernext_init(init_arg: str, site_data_dir: Path) -> tuple[datetime, str]:
+    """Resolve WeatherNext initialization datetime and cycle matching pattern."""
+    if init_arg.strip().lower() == "latest":
+        # 1. Check initializations.json
+        inits_file = site_data_dir / "initializations.json"
+        if inits_file.is_file():
+            try:
+                items = json.loads(inits_file.read_text(encoding="utf-8"))
+                wn_items = [item for item in items if str(item.get("hazard_source", "")).startswith("weathernext")]
+                if wn_items:
+                    latest_item = next((item for item in wn_items if item.get("is_latest_initialization")), wn_items[0])
+                    issued = latest_item.get("issued_utc")
+                    if issued:
+                        dt = parse_iso_or_date(issued)
+                        return dt, dt.strftime("%Y%m%dT%H%MZ") + "_wn2"
+            except Exception:
+                pass
+
+        # 2. Check cycles.json
+        cycles_file = site_data_dir / "cycles.json"
+        if cycles_file.is_file():
+            try:
+                cycles = json.loads(cycles_file.read_text(encoding="utf-8"))
+                wn_cycles = [c for c in cycles if str(c.get("hazard_source", "")).startswith("weathernext")]
+                if wn_cycles:
+                    issued = wn_cycles[0].get("issued_utc")
+                    if issued:
+                        dt = parse_iso_or_date(issued)
+                        return dt, dt.strftime("%Y%m%dT%H%MZ") + "_wn2"
+            except Exception:
+                pass
+
+        # 3. Check cycles directory
+        cycles_dir = site_data_dir / "cycles"
+        if cycles_dir.is_dir():
+            wn_dirs = sorted(cycles_dir.glob("*_wn2*"), reverse=True)
+            if wn_dirs:
+                prefix = wn_dirs[0].name.split("_")[0]
+                try:
+                    dt = datetime.strptime(prefix, "%Y%m%dT%H%MZ").replace(tzinfo=timezone.utc)
+                    return dt, prefix + "_wn2"
+                except Exception:
+                    pass
+
+        # Fallback
+        dt = datetime(2026, 9, 3, 6, 0, tzinfo=timezone.utc)
+        return dt, dt.strftime("%Y%m%dT%H%MZ") + "_wn2"
+
+    # Explicit init string provided
+    dt = parse_iso_or_date(init_arg)
+    has_time = "T" in init_arg or ":" in init_arg
+    if has_time:
+        prefix = dt.strftime("%Y%m%dT%H%MZ") + "_wn2"
+    else:
+        cycles_dir = site_data_dir / "cycles"
+        date_str = dt.strftime("%Y%m%d")
+        matching = sorted(cycles_dir.glob(f"{date_str}T*_wn2*")) if cycles_dir.is_dir() else []
+        if matching:
+            cycle_prefix = matching[0].name.split("_")[0]
+            try:
+                dt = datetime.strptime(cycle_prefix, "%Y%m%dT%H%MZ").replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+            prefix = cycle_prefix + "_wn2"
+        else:
+            prefix = dt.strftime("%Y%m%dT0000Z") + "_wn2"
+    return dt, prefix
+
+
+def generate_weathernext_marie_track(init_dt: datetime | None = None) -> dict[str, Any]:
     """Generate the WeatherNext 2 ensemble track for Hurricane Marie (EP132026).
     
-    Initialized 2026-09-03 06:00 UTC with 6-hourly fixes matching the 25
-    rolling WeatherNext 2 forecast windows (leads 6h to 168h).
+    Initialized with 6-hourly fixes matching the 25 rolling WeatherNext 2 forecast windows (leads 6h to 168h).
     """
     raw_fixes = [
         # (lead_h, lat, lon, vmax_kt, pmin_hpa, r34_nm, r50_nm, r64_nm, stage)
@@ -115,7 +198,8 @@ def generate_weathernext_marie_track() -> dict[str, Any]:
         (168, 24.8, -133.2, 20.0, 1018.0,  0.0,  0.0,  0.0, "LOW"),
     ]
 
-    init_dt = datetime(2026, 9, 3, 6, 0, tzinfo=timezone.utc)
+    if init_dt is None:
+        init_dt = datetime(2026, 9, 3, 6, 0, tzinfo=timezone.utc)
     points = []
     for tau, lat, lon, vmax, pmin, r34, r50, r64, stage in raw_fixes:
         valid_dt = init_dt + timedelta(hours=tau)
@@ -150,16 +234,22 @@ def generate_weathernext_marie_track() -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--init", default="latest",
+                        help="WeatherNext initialization (default: 'latest', or e.g. '2026-08-31', '2026-08-31T12:00:00Z')")
     parser.add_argument("--atcf", type=Path, help="Optional ATCF format track file")
     parser.add_argument("--output", type=Path, default=Path("site/data/weathernext-active-tracks.json"))
     parser.add_argument("--populate-cycles", action="store_true", default=True,
                         help="Populate individual cycle track.json files")
     args = parser.parse_args()
 
+    site_data_dir = args.output.parent
+    init_dt, cycle_prefix = resolve_weathernext_init(args.init, site_data_dir)
+    print(f"Targeting WeatherNext initialization: {init_dt.isoformat()} (pattern: {cycle_prefix}*)")
+
     if args.atcf and args.atcf.exists():
         data = parse_atcf_file(args.atcf)
     else:
-        track = generate_weathernext_marie_track()
+        track = generate_weathernext_marie_track(init_dt)
         data = {
             "available": True,
             "source": "Google DeepMind WeatherNext Cyclones (AI Ensemble)",
@@ -174,16 +264,16 @@ def main() -> None:
     # If requested, also sync into site/data/cycles/
     if args.populate_cycles and data.get("tracks"):
         marie_track = data["tracks"][0]
-        cycles_dir = args.output.parent / "cycles"
+        cycles_dir = site_data_dir / "cycles"
         if cycles_dir.exists():
-            for cycle_dir in sorted(cycles_dir.glob("20260903T0600Z_wn2x*")):
+            matching_cycles = sorted(cycles_dir.glob(f"{cycle_prefix}*"))
+            for cycle_dir in matching_cycles:
                 cycle_json_path = cycle_dir / "cycle.json"
                 if not cycle_json_path.exists():
                     continue
                 try:
                     cdata = json.loads(cycle_json_path.read_text(encoding="utf-8"))
                     lead_h = int(cdata.get("forecast_horizon_hours") or cdata.get("lead_hours") or 24)
-                    # Find matching point index
                     pts = marie_track["points"]
                     best_idx = 0
                     min_diff = 9999
@@ -197,21 +287,19 @@ def main() -> None:
                     cycle_track["current_index"] = best_idx
                     (cycle_dir / "track.json").write_text(json.dumps(cycle_track, indent=2) + "\n", encoding="utf-8")
 
-                    # Update track_available in cycle.json
                     cdata["track_available"] = True
                     cycle_json_path.write_text(json.dumps(cdata, indent=2) + "\n", encoding="utf-8")
                 except Exception as exc:
                     print(f"Could not update {cycle_dir}: {exc}")
 
-            # Also update cycles.json
-            cycles_meta_path = args.output.parent / "cycles.json"
+            cycles_meta_path = site_data_dir / "cycles.json"
             if cycles_meta_path.exists():
                 cmeta = json.loads(cycles_meta_path.read_text(encoding="utf-8"))
                 for c in cmeta:
-                    if str(c.get("cycle_id", "")).startswith("20260903T0600Z_wn2x"):
+                    if str(c.get("cycle_id", "")).startswith(cycle_prefix):
                         c["track_available"] = True
                 cycles_meta_path.write_text(json.dumps(cmeta, indent=2) + "\n", encoding="utf-8")
-                print("Updated cycles.json with track_available = True")
+                print(f"Updated cycles.json with track_available = True for {cycle_prefix}*")
 
 
 if __name__ == "__main__":
