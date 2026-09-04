@@ -43,3 +43,18 @@ def test_committed_static_payload_stays_within_pages_budget() -> None:
         for path in (SITE / "data" / "geometries").glob("*.geojson")
     }
     assert stored == referenced
+
+def test_evaluation_white_paper_is_published_and_linked() -> None:
+    index = (SITE / "index.html").read_text()
+    paper = (SITE / "evaluation.html").read_text()
+
+    assert 'href="evaluation.html"' in index
+    assert "Evaluation" in index
+    assert "Hindcast evaluation" in paper
+    assert 'href="assets/app.css"' in paper
+    # The white paper is a static document generated from the evaluation
+    # bundle: it must not depend on a plotting library or fetch anything at
+    # read time, or the numbers on a public page could change under it.
+    assert "cdn" not in paper.lower()
+    assert "fetch(" not in paper
+    assert "<svg" in paper
