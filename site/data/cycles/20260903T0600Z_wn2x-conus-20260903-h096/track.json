@@ -1,7 +1,7 @@
 {
   "available": true,
-  "source": "Google DeepMind WeatherNext Cyclones (AI Ensemble)",
-  "classification": "AI Tropical Cyclone Track Forecast",
+  "source": "Google DeepMind WeatherNext 2 Cyclones (AI Ensemble)",
+  "classification": "AI Tropical Cyclone Track Forecast (0.25\u00b0)",
   "storm_id": "ep132026",
   "name": "Hurricane Marie (WeatherNext AI)",
   "basin": "EP",
