@@ -19,6 +19,10 @@ def test_site_uses_relative_assets_and_static_data() -> None:
     assert "weather2grid-archive/" in index
     assert "Live forecast" in index
     assert "Archive" in index
+    assert 'id="run-picker"' in index
+    assert "Archived runs" in index
+    assert "function drawRunPicker" in app
+    assert "function selectAvailableRun" in app
 
 
 def test_committed_demo_has_required_entrypoints() -> None:
