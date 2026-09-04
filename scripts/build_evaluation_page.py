@@ -334,9 +334,9 @@ HEAD_SCRIPT = """
 (function () {
   try {
     var stored = localStorage.getItem('w2g_theme');
-    document.documentElement.setAttribute('data-theme', stored === 'light' ? 'light' : 'dark');
+    document.documentElement.setAttribute('data-theme', stored === 'dark' ? 'dark' : 'light');
   } catch (error) {
-    document.documentElement.setAttribute('data-theme', 'dark');
+    document.documentElement.setAttribute('data-theme', 'light');
   }
 })();
 """
@@ -769,7 +769,7 @@ every table here can be recomputed from the artifacts it links.</p>
 </main>"""
 
     return f"""<!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
