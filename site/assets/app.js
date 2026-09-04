@@ -16,7 +16,7 @@ const S = {
   // null means "follow the newest initialization". Set to an ISO issue
   // time to pin the view to an archived run.
   selectedInit: null,
-  overlays: { states: true, track: true, wind: true, extrapolation: false, threshold: true },
+  overlays: { states: true, track: true, nhc: false, wind: true, extrapolation: false, threshold: true },
   view: 'event', zoom: 1, panX: 0, panY: 0, dragging: null,
   mapScale: 1, mapBounds: null, mapOrigin: { ox: 0, oy: 0, x0: 0, y0: 0 },
   projectedCounties: [], projectedStates: [],
@@ -685,10 +685,13 @@ function updateCycleChrome() {
 
   [...$('cycle-dots').children].forEach((dot, i) => dot.classList.toggle('active', i === position));
 
-  document.querySelectorAll('[data-overlay="track"],[data-overlay="wind"],[data-view="storm"]').forEach((btn) => {
-    const hasTrackOrStorm = Boolean(S.track || (S.nhcTracks && S.nhcTracks.length));
-    btn.disabled = !hasTrackOrStorm;
-    btn.title = hasTrackOrStorm ? '' : 'No cyclone or storm track available.';
+  document.querySelectorAll('[data-overlay="track"],[data-overlay="nhc"],[data-overlay="wind"],[data-view="storm"]').forEach((btn) => {
+    const isNhcBtn = btn.dataset.overlay === 'nhc';
+    const hasData = isNhcBtn
+      ? Boolean(S.nhcTracks && S.nhcTracks.length)
+      : Boolean(S.track || (S.wnTracks && S.wnTracks.length) || (S.nhcTracks && S.nhcTracks.length));
+    btn.disabled = !hasData;
+    btn.title = hasData ? (isNhcBtn ? 'Toggle Official NOAA NHC Cyclone Tracks' : '') : 'No cyclone or storm track available.';
   });
 }
 
@@ -946,7 +949,12 @@ function projectMapGeometry() {
       rawList.push(st);
     }
   });
-  const visibleStorms = rawList;
+  const visibleStorms = rawList.filter((st) => {
+    if (st.trackSourceKind === 'weathernext' || st.isAiEnsemble) {
+      return Boolean(S.overlays.track);
+    }
+    return Boolean(S.overlays.nhc);
+  });
 
   // Restrict storm bounding to CONUS operational theater (Lon: -128°W to -64°W, Lat: 16°N to 54°N)
   // Prevents far-away open Pacific (Hawaii) or deep Atlantic storms from shifting CONUS to the side!
@@ -1214,7 +1222,12 @@ function drawStormCanvas(ctx, zoom) {
     }
   });
 
-  const visibleStorms = rawList;
+  const visibleStorms = rawList.filter((st) => {
+    if (st.trackSourceKind === 'weathernext' || st.isAiEnsemble) {
+      return Boolean(S.overlays.track);
+    }
+    return Boolean(S.overlays.nhc);
+  });
   if (!visibleStorms.length || !S.mapScreen) return;
 
   for (const st of visibleStorms) {
@@ -1226,7 +1239,7 @@ function drawStormCanvas(ctx, zoom) {
     const isWn = Boolean(st.isAiEnsemble || st.trackSourceKind === 'weathernext');
 
     // Uncertainty Cone
-    if (S.overlays.track && points.length > 1) {
+    if (points.length > 1) {
       const future = points.slice(currentIdx);
       if (future.length > 1) {
         ctx.save();
@@ -1324,7 +1337,7 @@ function drawStormCanvas(ctx, zoom) {
     }
 
     // Track Fix Points & Labels
-    if (S.overlays.track) {
+    {
       points.forEach((pt, i) => {
         const isCur = pt.selected;
         const tier = stormTier(pt.raw && pt.raw.vmax_kt != null ? pt.raw.vmax_kt : null, st.isCyclone);
@@ -1658,6 +1671,10 @@ function wireOverlays() {
     const key = btn.dataset.overlay;
     S.overlays[key] = !S.overlays[key];
     btn.setAttribute('aria-pressed', String(S.overlays[key]));
+    if (key === 'nhc' || key === 'track') {
+      projectMapGeometry();
+      drawSourceStack();
+    }
     requestMapRedraw();
   }));
 }
@@ -2098,14 +2115,20 @@ function drawSourceStack() {
   if (S.nhcTracks && S.nhcTracks.length) {
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'source-row active';
-    row.title = 'Show official NOAA NHC active tracks.';
-    row.innerHTML = `<span><i></i><b>NOAA NHC ocean storms</b></span><em>${S.nhcTracks.length} active track${S.nhcTracks.length === 1 ? '' : 's'}</em>`;
+    row.className = `source-row${S.overlays.nhc ? ' active' : ''}`;
+    row.title = 'Toggle official NOAA NHC active tracks.';
+    row.innerHTML = `<span><i></i><b>NOAA NHC ocean storms</b></span><em>${S.overlays.nhc ? 'visible' : 'hidden (click to show)'}</em>`;
     row.addEventListener('click', () => {
-      S.view = 'storm';
-      document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === 'storm')));
+      S.overlays.nhc = !S.overlays.nhc;
+      const nhcBtn = document.querySelector('[data-overlay="nhc"]');
+      if (nhcBtn) nhcBtn.setAttribute('aria-pressed', String(S.overlays.nhc));
+      if (S.overlays.nhc) {
+        S.view = 'storm';
+        document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === 'storm')));
+      }
       projectMapGeometry();
       requestMapRedraw();
+      drawSourceStack();
     });
     rows.push(row);
   }

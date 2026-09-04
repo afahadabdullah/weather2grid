@@ -818,7 +818,8 @@ h3 {
   height: 6px;
 }
 .trig-key { width: 9px; height: 6px; border-radius: 2px; background: var(--color-amber); display: inline-block; opacity: 0.9; }
-.line-key { border-top: 2px solid var(--color-cyan); }
+.line-key { border-top: 2px solid #c084fc; }
+.nhc-key { border-top: 2px solid var(--color-cyan); }
 .ring-key { border: 1.5px solid var(--color-amber); border-radius: 50%; }
 .state-key { border: 1.5px solid var(--ink-secondary); }
 .hatch-key { background: repeating-linear-gradient(45deg, transparent 0 2px, var(--ink-secondary) 2px 3px); }
