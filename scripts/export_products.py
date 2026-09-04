@@ -591,6 +591,14 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
         track = source / "track.json"
         if not track.exists():
             track = archive / "track.json"
+        if not track.exists():
+            # Track overlays may be enriched after a dashboard bundle arrives
+            # (for example by the WeatherNext cyclone-track refresher). A new
+            # county-risk export must not replace that independently refreshed
+            # track with an "unavailable" placeholder.
+            existing_track = output / "cycles" / source.name / "track.json"
+            if existing_track.exists():
+                track = existing_track
         if track.exists():
             try:
                 track_data = json.loads(track.read_text(encoding="utf-8"))

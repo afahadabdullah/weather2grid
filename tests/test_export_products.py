@@ -130,6 +130,20 @@ def test_export_preserves_independently_refreshed_weathernext_tracks(tmp_path: P
     assert (output / "weathernext-active-tracks.json").read_text() == tracks
 
 
+def test_export_preserves_an_enriched_cycle_track(tmp_path: Path) -> None:
+    archive = _init_archive(tmp_path / "products", [0])
+    output = tmp_path / "site-data"
+    summaries = export_archive(archive, output)
+    cycle_id = summaries[0]["cycle_id"]
+    track_path = output / "cycles" / cycle_id / "track.json"
+    enriched = {"available": True, "points": [{"lat": 30, "lon": -80}]}
+    track_path.write_text(json.dumps(enriched))
+
+    export_archive(archive, output)
+
+    assert json.loads(track_path.read_text()) == enriched
+
+
 def test_failed_export_preserves_previous_snapshot(tmp_path: Path) -> None:
     archive = tmp_path / "bad-products"
     cycle = archive / "20260101T0000Z"
