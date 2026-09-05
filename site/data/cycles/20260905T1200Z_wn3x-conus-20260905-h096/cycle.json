@@ -4,7 +4,7 @@
   "event_name": "CONUS 7-day wind outlook \u2014 24 h to +96 h",
   "issued_utc": "2026-09-05T12:00:00+00:00",
   "lead_hours": 78.0,
-  "age_hours": 8.45,
+  "age_hours": 8.65,
   "freshness": "not evaluated",
   "synthetic": false,
   "release_gate_passed": false,
@@ -34,7 +34,7 @@
   "display_frame_count": 1,
   "county_data_format": "w2g-columnar-v1",
   "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-  "geometry_path": "geometries/7ebea388907d8fd8.geojson",
+  "geometry_path": "geometries/620f10a177ab8e17.geojson",
   "track_available": true,
   "fields": {
     "required": [

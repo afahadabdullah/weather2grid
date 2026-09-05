@@ -92,7 +92,7 @@ def parse_iso_or_date(val: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def resolve_weathernext_init(init_arg: str, site_data_dir: Path, version: int = 2) -> tuple[datetime, str]:
+def resolve_weathernext_init(init_arg: str, site_data_dir: Path, version: int = 3) -> tuple[datetime, str]:
     """Resolve WeatherNext initialization datetime and cycle matching pattern."""
     tag = f"_wn{version}"
     source_prefix = f"weathernext{version}"
@@ -143,7 +143,10 @@ def resolve_weathernext_init(init_arg: str, site_data_dir: Path, version: int = 
                     pass
 
         # Fallback
-        dt = datetime(2026, 9, 3, 6, 0, tzinfo=timezone.utc)
+        if version == 3:
+            dt = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
+        else:
+            dt = datetime(2026, 9, 3, 6, 0, tzinfo=timezone.utc)
         return dt, dt.strftime("%Y%m%dT%H%MZ") + tag
 
     # Explicit init string provided
@@ -244,8 +247,8 @@ def generate_weathernext_marie_track(init_dt: datetime | None = None, version: i
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", type=int, choices=[2, 3], default=2,
-                        help="WeatherNext model version (2 or 3, default: 2)")
+    parser.add_argument("--version", type=int, choices=[2, 3], default=3,
+                        help="WeatherNext model version (2 or 3, default: 3)")
     parser.add_argument("--init", default="latest",
                         help="WeatherNext initialization (default: 'latest', or e.g. '2026-08-31', '2026-08-31T12:00:00Z')")
     parser.add_argument("--atcf", type=Path, help="Optional ATCF format track file")
