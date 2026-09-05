@@ -313,6 +313,15 @@ def main() -> None:
                 cycles_meta_path.write_text(json.dumps(cmeta, indent=2) + "\n", encoding="utf-8")
                 print(f"Updated cycles.json with track_available = True for {cycle_prefix}*")
 
+            status_path = site_data_dir / "status.json"
+            if status_path.exists():
+                smeta = json.loads(status_path.read_text(encoding="utf-8"))
+                latest = smeta.get("latest", {})
+                if str(latest.get("cycle_id", "")).startswith(cycle_prefix):
+                    latest["track_available"] = True
+                    status_path.write_text(json.dumps(smeta, indent=2) + "\n", encoding="utf-8")
+                    print(f"Updated status.json with track_available = True for {cycle_prefix}*")
+
 
 if __name__ == "__main__":
     main()
