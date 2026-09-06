@@ -1,7 +1,5 @@
 {
   "available": true,
-  "source": "Google DeepMind WeatherNext 3 Cyclones (AI Ensemble)",
-  "retrieved_at_utc": "2026-09-05T20:39:21.513041+00:00",
   "tracks": [
     {
       "available": true,
@@ -11,8 +9,6 @@
       "name": "Hurricane Marie (WeatherNext AI)",
       "basin": "EP",
       "model": "WeatherNext 3 / Cyclones",
-      "init_time_utc": "2026-09-05T12:00:00+00:00",
-      "advisory_issued_utc": "2026-09-05T12:00:00+00:00",
       "current_index": 0,
       "points": [
         {
@@ -379,7 +375,30 @@
           "r64_nm": 0.0,
           "stage": "LOW"
         }
-      ]
+      ],
+      "init_time_utc": "2026-09-05T12:00:00+00:00",
+      "forecast_init_time_utc": "2026-09-05T12:00:00+00:00",
+      "advisory_issued_utc": "2026-09-05T12:00:00+00:00",
+      "hazard_source": "weathernext3_100m_wind_proxy",
+      "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
+      "model_version": 3,
+      "pairing_key": "forecast_init_time_utc"
     }
+  ],
+  "source": "Google DeepMind WeatherNext 3 Cyclones (AI Ensemble)",
+  "retrieved_at_utc": "2026-09-06T20:45:49.735809+00:00",
+  "forecast_init_time_utc": "2026-09-05T12:00:00+00:00",
+  "hazard_source": "weathernext3_100m_wind_proxy",
+  "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
+  "model_version": 3,
+  "pairing_key": "forecast_init_time_utc",
+  "cycle_ids": [
+    "20260905T1200Z_wn3x-conus-20260905-h024",
+    "20260905T1200Z_wn3x-conus-20260905-h048",
+    "20260905T1200Z_wn3x-conus-20260905-h072",
+    "20260905T1200Z_wn3x-conus-20260905-h096",
+    "20260905T1200Z_wn3x-conus-20260905-h120",
+    "20260905T1200Z_wn3x-conus-20260905-h144",
+    "20260905T1200Z_wn3x-conus-20260905-h168"
   ]
 }

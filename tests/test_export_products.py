@@ -131,17 +131,114 @@ def test_export_preserves_independently_refreshed_weathernext_tracks(tmp_path: P
 
 
 def test_export_preserves_an_enriched_cycle_track(tmp_path: Path) -> None:
+    """A track refreshed out of band survives a re-export - but only when it
+    carries the same initialization as the cycle it sits in."""
     archive = _init_archive(tmp_path / "products", [0])
     output = tmp_path / "site-data"
     summaries = export_archive(archive, output)
     cycle_id = summaries[0]["cycle_id"]
     track_path = output / "cycles" / cycle_id / "track.json"
-    enriched = {"available": True, "points": [{"lat": 30, "lon": -80}]}
+    enriched = {
+        "available": True,
+        "forecast_init_time_utc": "2026-01-01T00:00:00+00:00",
+        "points": [{"lat": 30, "lon": -80}],
+    }
     track_path.write_text(json.dumps(enriched))
 
-    export_archive(archive, output)
+    resummaries = export_archive(archive, output)
 
     assert json.loads(track_path.read_text()) == enriched
+    assert resummaries[0]["track_available"] is True
+    assert resummaries[0]["track_init_matches_cycle"] is True
+
+
+def test_a_track_from_another_initialization_is_never_published(tmp_path: Path) -> None:
+    """The whole point of the pairing contract: a storm track and an outage
+    field on one map must come from one model run."""
+    archive = _init_archive(tmp_path / "products", [0])
+    output = tmp_path / "site-data"
+    summaries = export_archive(archive, output)
+    cycle_id = summaries[0]["cycle_id"]
+    track_path = output / "cycles" / cycle_id / "track.json"
+    # Cycle init is 2026-01-01T00:00Z; this track is six hours newer.
+    track_path.write_text(json.dumps({
+        "available": True,
+        "forecast_init_time_utc": "2026-01-01T06:00:00+00:00",
+        "points": [{"lat": 30, "lon": -80}],
+    }))
+
+    resummaries = export_archive(archive, output)
+
+    published = json.loads(track_path.read_text())
+    assert published["available"] is False
+    assert published["rejected_track_init_time_utc"] == "2026-01-01T06:00:00+00:00"
+    assert resummaries[0]["track_available"] is False
+    assert resummaries[0]["track_init_matches_cycle"] is False
+    assert resummaries[0]["track_init_mismatch"]["cycle_issued_utc"] == \
+        "2026-01-01T00:00:00+00:00"
+
+
+def test_a_bundle_shipped_track_is_stamped_with_its_cycle_init(tmp_path: Path) -> None:
+    """A track the modeling pipeline wrote next to its own cycle belongs to it
+    by construction; the export stamps that init so every later consumer can
+    check the pairing instead of trusting directory layout."""
+    archive = _init_archive(tmp_path / "products", [0])
+    (archive / "20260101T0000Z_wn2x-w0" / "track.json").write_text(json.dumps({
+        "available": True,
+        "storm_id": "HRRRLOW-TEST",
+        "points": [{"lat": 42.8, "lon": -115.7, "lead_hours": 0}],
+    }))
+    output = tmp_path / "site-data"
+
+    summaries = export_archive(archive, output)
+
+    published = json.loads(
+        (output / "cycles" / "20260101T0000Z_wn2x-w0" / "track.json").read_text())
+    assert published["forecast_init_time_utc"] == "2026-01-01T00:00:00+00:00"
+    assert summaries[0]["track_available"] is True
+    # And it survives the next export, now on its own stamp rather than on
+    # where the file happened to sit.
+    assert export_archive(archive, output)[0]["track_available"] is True
+
+
+def test_an_untagged_track_cannot_claim_to_be_paired(tmp_path: Path) -> None:
+    """A track with no initialization stamp that appears in the published site
+    rather than in a product bundle cannot be shown to belong to this cycle,
+    so it is withheld rather than assumed."""
+    archive = _init_archive(tmp_path / "products", [0])
+    output = tmp_path / "site-data"
+    summaries = export_archive(archive, output)
+    track_path = output / "cycles" / summaries[0]["cycle_id"] / "track.json"
+    track_path.write_text(json.dumps({
+        "available": True, "points": [{"lat": 30, "lon": -80}]}))
+
+    resummaries = export_archive(archive, output)
+
+    assert json.loads(track_path.read_text())["available"] is False
+    assert resummaries[0]["track_available"] is False
+
+
+def test_a_retained_cycle_keeps_its_paired_track_through_a_merge(tmp_path: Path) -> None:
+    """Cycles carried forward by the merge path go through the same gate, so a
+    track cannot survive a re-export into a run it does not belong to."""
+    archive = _init_archive(tmp_path / "products", [0, 6])
+    output = tmp_path / "site-data"
+    export_archive(archive, output)
+    paired = output / "cycles" / "20260101T0000Z_wn2x-w0" / "track.json"
+    paired.write_text(json.dumps({
+        "available": True,
+        "forecast_init_time_utc": "2026-01-01T00:00:00+00:00",
+        "points": [{"lat": 30, "lon": -80}],
+    }))
+
+    # Re-export only the newer initialization; the 00Z cycle comes through the
+    # merge branch.
+    later = _init_archive(tmp_path / "later", [6])
+    summaries = export_archive(later, output, merge=True)
+
+    by_id = {s["cycle_id"]: s for s in summaries}
+    assert by_id["20260101T0000Z_wn2x-w0"]["track_available"] is True
+    assert json.loads(paired.read_text())["available"] is True
 
 
 def test_failed_export_preserves_previous_snapshot(tmp_path: Path) -> None:

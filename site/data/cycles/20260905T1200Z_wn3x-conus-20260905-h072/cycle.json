@@ -166,5 +166,7 @@
     },
     "generated_utc": "2026-09-05T19:41:20.497699+00:00",
     "code_version": "0.0.1"
-  }
+  },
+  "track_init_time_utc": "2026-09-05T12:00:00+00:00",
+  "track_init_matches_cycle": true
 }

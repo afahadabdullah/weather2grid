@@ -6,6 +6,13 @@ Supports:
 2. Generating calibrated WeatherNext 2 AI ensemble tracks synchronized to the 
    WeatherNext 2 6-hourly cycle initializations.
 3. Exporting to site/data/weathernext-active-tracks.json and per-cycle track.json.
+
+Every track this script writes is tagged with the forecast initialization it
+belongs to (``forecast_init_time_utc``).  The dashboard pairs a cyclone track
+to a county-outage cycle by requiring that tag to equal the cycle's
+``issued_utc`` exactly, so a storm from one init can never be drawn over an
+outage forecast from another.  Cycles whose stored track no longer matches
+their own init are reset to an "unavailable" placeholder on every run.
 """
 from __future__ import annotations
 
@@ -28,6 +35,32 @@ def parse_atcf_lon(val: str) -> float:
     hem = val[-1].upper()
     deg = float(val[:-1]) / 10.0
     return -deg if hem == "W" else deg
+
+
+def hazard_source_for(version: int) -> str:
+    """StormGrid hazard_source string for a WeatherNext model version."""
+    return f"weathernext{version}_100m_wind_proxy"
+
+
+def forecast_provider_for(version: int) -> str:
+    return f"Google DeepMind WeatherNext {version} via BigQuery"
+
+
+def stamp_pairing(track: dict[str, Any], init_dt: datetime, version: int) -> dict[str, Any]:
+    """Tag a track with the initialization the dashboard must pair it to.
+
+    ``forecast_init_time_utc`` is the single pairing key: the dashboard only
+    draws this track over a cycle whose ``issued_utc`` matches it.  The other
+    fields make the pairing auditable in the published JSON.
+    """
+    track["init_time_utc"] = init_dt.isoformat()
+    track["forecast_init_time_utc"] = init_dt.isoformat()
+    track["advisory_issued_utc"] = init_dt.isoformat()
+    track["hazard_source"] = hazard_source_for(version)
+    track["forecast_provider"] = forecast_provider_for(version)
+    track["model_version"] = version
+    track["pairing_key"] = "forecast_init_time_utc"
+    return track
 
 
 def parse_atcf_file(path: Path) -> dict[str, Any]:
@@ -230,7 +263,7 @@ def generate_weathernext_marie_track(init_dt: datetime | None = None, version: i
     source_label = f"Google DeepMind WeatherNext {version} Cyclones (AI Ensemble)"
     classification = f"AI Tropical Cyclone Track Forecast ({'0.1°' if version == 3 else '0.25°'})"
 
-    return {
+    return stamp_pairing({
         "available": True,
         "source": source_label,
         "classification": classification,
@@ -238,11 +271,9 @@ def generate_weathernext_marie_track(init_dt: datetime | None = None, version: i
         "name": "Hurricane Marie (WeatherNext AI)",
         "basin": "EP",
         "model": model_label,
-        "init_time_utc": init_dt.isoformat(),
-        "advisory_issued_utc": init_dt.isoformat(),
         "current_index": 0,
         "points": points,
-    }
+    }, init_dt, version)
 
 
 def main() -> None:
@@ -255,6 +286,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("site/data/weathernext-active-tracks.json"))
     parser.add_argument("--populate-cycles", action="store_true", default=True,
                         help="Populate individual cycle track.json files")
+    parser.add_argument("--no-prune-stale", dest="prune_stale", action="store_false", default=True,
+                        help="Keep per-cycle tracks whose init no longer matches their cycle "
+                             "(default: reset them, so no cycle ever shows another init's storm)")
+    parser.add_argument("--allow-unpaired", action="store_true",
+                        help="Exit 0 even when the resolved init matches no published cycle")
     args = parser.parse_args()
 
     site_data_dir = args.output.parent
@@ -263,67 +299,219 @@ def main() -> None:
 
     if args.atcf and args.atcf.exists():
         data = parse_atcf_file(args.atcf)
+        # An ATCF file carries its own init.  Trust the file, but refuse to
+        # silently publish it against a different initialization than the one
+        # the cycles were built from - that is exactly the pairing this script
+        # exists to guarantee.
+        kept = []
+        for track in data.get("tracks", []):
+            track_init = track.get("init_time_utc")
+            if track_init and parse_iso_or_date(track_init) != init_dt:
+                print(f"  ! skipping {track.get('storm_id')}: ATCF init {track_init} "
+                      f"does not match target init {init_dt.isoformat()}")
+                continue
+            kept.append(stamp_pairing(track, init_dt, args.version))
+        data["tracks"] = kept
+        data["available"] = bool(kept)
     else:
         track = generate_weathernext_marie_track(init_dt, version=args.version)
-        data = {
-            "available": True,
-            "source": f"Google DeepMind WeatherNext {args.version} Cyclones (AI Ensemble)",
-            "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
-            "tracks": [track],
-        }
+        data = {"available": True, "tracks": [track]}
+
+    # Initialization provenance on the index itself, so a consumer can pair
+    # without opening each track.
+    data["source"] = f"Google DeepMind WeatherNext {args.version} Cyclones (AI Ensemble)"
+    data["retrieved_at_utc"] = datetime.now(timezone.utc).isoformat()
+    data["forecast_init_time_utc"] = init_dt.isoformat()
+    data["hazard_source"] = hazard_source_for(args.version)
+    data["forecast_provider"] = forecast_provider_for(args.version)
+    data["model_version"] = args.version
+    data["pairing_key"] = "forecast_init_time_utc"
+
+    paired_cycle_ids: list[str] = []
+    cycles_dir = site_data_dir / "cycles"
+
+    # ------------------------------------------------------------------
+    # Pair the track into every cycle sharing this exact initialization.
+    # ------------------------------------------------------------------
+    if args.populate_cycles and data.get("tracks") and cycles_dir.exists():
+        marie_track = data["tracks"][0]
+        for cycle_dir in sorted(cycles_dir.glob(f"{cycle_prefix}*")):
+            cycle_json_path = cycle_dir / "cycle.json"
+            if not cycle_json_path.exists():
+                continue
+            try:
+                cdata = json.loads(cycle_json_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"Could not read {cycle_dir}: {exc}")
+                continue
+
+            issued = cdata.get("issued_utc") or (cdata.get("meta") or {}).get("forecast_init_time_utc")
+            if not issued or parse_iso_or_date(str(issued)) != init_dt:
+                print(f"  ! {cycle_dir.name}: issued {issued} != track init "
+                      f"{init_dt.isoformat()} - not pairing")
+                continue
+
+            try:
+                lead_h = int(cdata.get("forecast_horizon_hours") or cdata.get("lead_hours") or 24)
+                pts = marie_track["points"]
+                best_idx = min(range(len(pts)), key=lambda i: abs(pts[i]["lead_hours"] - lead_h))
+
+                cycle_track = dict(marie_track)
+                cycle_track["current_index"] = best_idx
+                cycle_track["cycle_id"] = cdata.get("cycle_id", cycle_dir.name)
+                cycle_track["paired_cycle_issued_utc"] = str(issued)
+                (cycle_dir / "track.json").write_text(
+                    json.dumps(cycle_track, indent=2) + "\n", encoding="utf-8")
+
+                cdata["track_available"] = True
+                cdata["track_init_time_utc"] = init_dt.isoformat()
+                cdata["track_init_matches_cycle"] = True
+                cdata.pop("track_init_mismatch", None)
+                cycle_json_path.write_text(json.dumps(cdata, indent=2) + "\n", encoding="utf-8")
+                paired_cycle_ids.append(cdata.get("cycle_id", cycle_dir.name))
+            except Exception as exc:
+                print(f"Could not update {cycle_dir}: {exc}")
+
+        print(f"Paired track into {len(paired_cycle_ids)} cycle(s) for init {init_dt.isoformat()}")
+
+    # ------------------------------------------------------------------
+    # Reset any cycle still holding a track from a different init.  Without
+    # this a cycle keeps whichever storm it was last given, which is how an
+    # outage forecast ends up under a storm from another run.
+    # ------------------------------------------------------------------
+    if args.prune_stale and cycles_dir.exists():
+        pruned = 0
+        for cycle_dir in sorted(cycles_dir.iterdir()):
+            track_path = cycle_dir / "track.json"
+            cycle_json_path = cycle_dir / "cycle.json"
+            if not track_path.exists() or not cycle_json_path.exists():
+                continue
+            try:
+                tdata = json.loads(track_path.read_text(encoding="utf-8"))
+                cdata = json.loads(cycle_json_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if tdata.get("available") is False:
+                continue
+
+            # Only clear tracks this script is responsible for. A cycle can
+            # ship its own track inside its product bundle (the HRRR surface-low
+            # detection, for example); that one belongs to its cycle by
+            # construction and is not ours to second-guess.
+            provenance = " ".join(str(tdata.get(k, "")) for k in
+                                  ("source", "model", "hazard_source", "classification"))
+            if "weathernext" not in provenance.lower():
+                continue
+
+            track_init = tdata.get("forecast_init_time_utc") or tdata.get("init_time_utc")
+            issued = cdata.get("issued_utc")
+            matched = False
+            if track_init and issued:
+                try:
+                    matched = parse_iso_or_date(str(track_init)) == parse_iso_or_date(str(issued))
+                except Exception:
+                    matched = False
+            if matched:
+                continue
+
+            write_unavailable_track(
+                track_path,
+                reason=(f"Track init {track_init or 'unknown'} does not match this cycle's "
+                        f"initialization {issued or 'unknown'}; a storm forecast is only shown "
+                        f"alongside the outage forecast from the same init."),
+                cycle_id=cdata.get("cycle_id", cycle_dir.name),
+                cycle_issued_utc=str(issued) if issued else None,
+                track_init_time_utc=str(track_init) if track_init else None,
+            )
+            cdata["track_available"] = False
+            cdata["track_init_matches_cycle"] = False
+            cdata["track_init_mismatch"] = {
+                "cycle_issued_utc": issued,
+                "track_init_time_utc": track_init,
+            }
+            cycle_json_path.write_text(json.dumps(cdata, indent=2) + "\n", encoding="utf-8")
+            pruned += 1
+            print(f"  - {cycle_dir.name}: cleared track from init {track_init} "
+                  f"(cycle init {issued})")
+        if pruned:
+            print(f"Cleared {pruned} mismatched per-cycle track(s)")
+
+    data["cycle_ids"] = paired_cycle_ids
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote WeatherNext tracks to {args.output}")
 
-    # If requested, also sync into site/data/cycles/
-    if args.populate_cycles and data.get("tracks"):
-        marie_track = data["tracks"][0]
-        cycles_dir = site_data_dir / "cycles"
-        if cycles_dir.exists():
-            matching_cycles = sorted(cycles_dir.glob(f"{cycle_prefix}*"))
-            for cycle_dir in matching_cycles:
-                cycle_json_path = cycle_dir / "cycle.json"
-                if not cycle_json_path.exists():
-                    continue
-                try:
-                    cdata = json.loads(cycle_json_path.read_text(encoding="utf-8"))
-                    lead_h = int(cdata.get("forecast_horizon_hours") or cdata.get("lead_hours") or 24)
-                    pts = marie_track["points"]
-                    best_idx = 0
-                    min_diff = 9999
-                    for idx, pt in enumerate(pts):
-                        diff = abs(pt["lead_hours"] - lead_h)
-                        if diff < min_diff:
-                            min_diff = diff
-                            best_idx = idx
+    # ------------------------------------------------------------------
+    # Keep the cycle/status indexes honest about which cycles carry a track.
+    # ------------------------------------------------------------------
+    sync_track_flags(site_data_dir, cycles_dir)
 
-                    cycle_track = dict(marie_track)
-                    cycle_track["current_index"] = best_idx
-                    (cycle_dir / "track.json").write_text(json.dumps(cycle_track, indent=2) + "\n", encoding="utf-8")
+    if not paired_cycle_ids:
+        message = (f"No published cycle carries initialization {init_dt.isoformat()}; "
+                   f"the WeatherNext track will not be shown on any cycle.")
+        if args.allow_unpaired:
+            print(f"WARNING: {message}")
+        else:
+            raise SystemExit(f"ERROR: {message}\n"
+                             f"Export the matching county-risk cycles first, or pass "
+                             f"--allow-unpaired to publish the track index anyway.")
 
-                    cdata["track_available"] = True
-                    cycle_json_path.write_text(json.dumps(cdata, indent=2) + "\n", encoding="utf-8")
-                except Exception as exc:
-                    print(f"Could not update {cycle_dir}: {exc}")
 
-            cycles_meta_path = site_data_dir / "cycles.json"
-            if cycles_meta_path.exists():
-                cmeta = json.loads(cycles_meta_path.read_text(encoding="utf-8"))
-                for c in cmeta:
-                    if str(c.get("cycle_id", "")).startswith(cycle_prefix):
-                        c["track_available"] = True
-                cycles_meta_path.write_text(json.dumps(cmeta, indent=2) + "\n", encoding="utf-8")
-                print(f"Updated cycles.json with track_available = True for {cycle_prefix}*")
+def write_unavailable_track(path: Path, *, reason: str, cycle_id: str | None = None,
+                            cycle_issued_utc: str | None = None,
+                            track_init_time_utc: str | None = None) -> None:
+    """Replace a per-cycle track with an explicit, explained placeholder."""
+    payload: dict[str, Any] = {"available": False, "reason": reason}
+    if cycle_id:
+        payload["cycle_id"] = cycle_id
+    if cycle_issued_utc:
+        payload["cycle_issued_utc"] = cycle_issued_utc
+    if track_init_time_utc:
+        payload["rejected_track_init_time_utc"] = track_init_time_utc
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-            status_path = site_data_dir / "status.json"
-            if status_path.exists():
-                smeta = json.loads(status_path.read_text(encoding="utf-8"))
-                latest = smeta.get("latest", {})
-                if str(latest.get("cycle_id", "")).startswith(cycle_prefix):
-                    latest["track_available"] = True
-                    status_path.write_text(json.dumps(smeta, indent=2) + "\n", encoding="utf-8")
-                    print(f"Updated status.json with track_available = True for {cycle_prefix}*")
+
+def sync_track_flags(site_data_dir: Path, cycles_dir: Path) -> None:
+    """Mirror each cycle's real track_available into cycles.json and status.json."""
+    if not cycles_dir.exists():
+        return
+    flags: dict[str, bool] = {}
+    for cycle_dir in sorted(cycles_dir.iterdir()):
+        cycle_json_path = cycle_dir / "cycle.json"
+        if not cycle_json_path.exists():
+            continue
+        try:
+            cdata = json.loads(cycle_json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        flags[str(cdata.get("cycle_id", cycle_dir.name))] = bool(cdata.get("track_available"))
+
+    cycles_meta_path = site_data_dir / "cycles.json"
+    if cycles_meta_path.exists():
+        try:
+            cmeta = json.loads(cycles_meta_path.read_text(encoding="utf-8"))
+            for c in cmeta:
+                cid = str(c.get("cycle_id", ""))
+                if cid in flags:
+                    c["track_available"] = flags[cid]
+            cycles_meta_path.write_text(json.dumps(cmeta, indent=2) + "\n", encoding="utf-8")
+            print(f"Synced track_available for {len(flags)} cycle(s) in cycles.json")
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Could not sync cycles.json: {exc}")
+
+    status_path = site_data_dir / "status.json"
+    if status_path.exists():
+        try:
+            smeta = json.loads(status_path.read_text(encoding="utf-8"))
+            latest = smeta.get("latest", {})
+            cid = str(latest.get("cycle_id", ""))
+            if cid in flags:
+                latest["track_available"] = flags[cid]
+                status_path.write_text(json.dumps(smeta, indent=2) + "\n", encoding="utf-8")
+                print(f"Synced track_available for {cid} in status.json")
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Could not sync status.json: {exc}")
 
 
 if __name__ == "__main__":

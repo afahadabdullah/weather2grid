@@ -78,6 +78,82 @@ def age_hours(issued: str, now: datetime) -> float | None:
     return round((pd.Timestamp(now) - timestamp).total_seconds() / 3600, 2)
 
 
+def track_pairing(track_path: Path, issued_utc: str | None,
+                  from_bundle: bool = False) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None]:
+    """Decide whether a track file may be published alongside a cycle.
+
+    A storm track and a county-outage field drawn on one map must come from
+    one model run.  Two provenances reach this function and they are not
+    equally trustworthy:
+
+    * A track shipped *inside* the cycle's own product directory belongs to
+      that cycle by construction - the modeling pipeline wrote them together.
+      It is published, and stamped with the cycle's initialization so every
+      later consumer (the merge path, the browser) can verify the pairing
+      instead of re-deriving this provenance.
+    * A track picked up from the already-published site was refreshed on its
+      own cadence by the cyclone fetcher, and routinely holds a different
+      initialization than the cycle now being exported.  It must prove itself:
+      its ``forecast_init_time_utc`` (or legacy ``init_time_utc``) has to equal
+      the cycle's initialization exactly, or it is withheld.
+
+    Returns (available, mismatch, payload).  ``payload`` is the track content
+    to publish, stamped when necessary; None means nothing to write.
+    """
+    try:
+        data = json.loads(track_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, None, None
+    if data.get("available", True) is False or not data.get("points"):
+        return False, None, None
+
+    track_init = data.get("forecast_init_time_utc") or data.get("init_time_utc")
+
+    if from_bundle and not track_init and issued_utc:
+        # Provenance by construction: stamp it so it is checkable from here on.
+        data["forecast_init_time_utc"] = str(issued_utc)
+        data["init_time_utc"] = data.get("init_time_utc", str(issued_utc))
+        data["pairing_key"] = "forecast_init_time_utc"
+        data["pairing_basis"] = "shipped with this cycle's product bundle"
+        return True, None, data
+
+    if not track_init:
+        return False, {"cycle_issued_utc": issued_utc, "track_init_time_utc": None,
+                       "reason": "track carries no forecast_init_time_utc"}, None
+    if not issued_utc:
+        return False, {"cycle_issued_utc": None, "track_init_time_utc": str(track_init),
+                       "reason": "cycle carries no forecast_init_time_utc"}, None
+    try:
+        same = pd.Timestamp(str(track_init)) == pd.Timestamp(str(issued_utc))
+    except (TypeError, ValueError):
+        same = False
+    if same:
+        return True, None, data
+    return False, {"cycle_issued_utc": str(issued_utc),
+                   "track_init_time_utc": str(track_init),
+                   "reason": "track initialization differs from cycle initialization"}, None
+
+
+def apply_track_pairing(summary: dict[str, Any], track_path: Path,
+                        issued_utc: str | None,
+                        from_bundle: bool = False) -> dict[str, Any] | None:
+    """Record the pairing verdict on a cycle summary.
+
+    Returns the track payload to publish, or None when it must be withheld.
+    """
+    available, mismatch, payload = track_pairing(track_path, issued_utc, from_bundle)
+    summary["track_available"] = available
+    summary["track_init_matches_cycle"] = available
+    if mismatch is not None:
+        summary["track_init_mismatch"] = mismatch
+        print(f"  ! {summary.get('cycle_id', track_path.parent.name)}: "
+              f"{mismatch['reason']} (cycle {mismatch['cycle_issued_utc']}, "
+              f"track {mismatch['track_init_time_utc']}) - track withheld")
+    else:
+        summary.pop("track_init_mismatch", None)
+    return payload if available else None
+
+
 def cycle_summary(meta: dict[str, Any], now: datetime) -> dict[str, Any]:
     issued = str(meta.get("forecast_init_time_utc", ""))
     age = age_hours(issued, now)
@@ -589,8 +665,10 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
         summary["geometry_path"] = publish_geometry(geometry, staging)
 
         track = source / "track.json"
+        track_from_bundle = track.exists()
         if not track.exists():
             track = archive / "track.json"
+            track_from_bundle = track.exists()
         if not track.exists():
             # Track overlays may be enriched after a dashboard bundle arrives
             # (for example by the WeatherNext cyclone-track refresher). A new
@@ -599,18 +677,27 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
             existing_track = output / "cycles" / source.name / "track.json"
             if existing_track.exists():
                 track = existing_track
+        cycle_issued = meta.get("forecast_init_time_utc")
         if track.exists():
-            try:
-                track_data = json.loads(track.read_text(encoding="utf-8"))
-                summary["track_available"] = bool(
-                    track_data.get("available", True) is not False
-                    and track_data.get("points")
-                )
-            except (OSError, json.JSONDecodeError):
-                summary["track_available"] = False
-            shutil.copyfile(track, target / "track.json")
+            payload = apply_track_pairing(summary, track, cycle_issued,
+                                          from_bundle=track_from_bundle)
+            if payload is not None:
+                write_json(target / "track.json", payload)
+            else:
+                # Publishing a track from a different init would put a storm
+                # and an outage field from two different runs on one map.
+                mismatch = summary.get("track_init_mismatch") or {}
+                write_json(target / "track.json", {
+                    "available": False,
+                    "reason": mismatch.get(
+                        "reason", "no usable track in this product"),
+                    "cycle_id": summary.get("cycle_id"),
+                    "cycle_issued_utc": cycle_issued,
+                    "rejected_track_init_time_utc": mismatch.get("track_init_time_utc"),
+                })
         else:
             summary["track_available"] = False
+            summary["track_init_matches_cycle"] = False
             write_json(target / "track.json", {"available": False, "reason": "no track in this product"})
         write_json(target / "cycle.json", {**summary, "fields": fields, "meta": meta})
 
@@ -640,16 +727,20 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
                         cycle_geometry.unlink()
                 track_file = dest_dir / "track.json"
                 if track_file.exists():
-                    try:
-                        track_data = json.loads(track_file.read_text(encoding="utf-8"))
-                        summary["track_available"] = bool(
-                            track_data.get("available", True) is not False
-                            and track_data.get("points")
-                        )
-                    except (OSError, json.JSONDecodeError):
-                        summary["track_available"] = False
+                    if apply_track_pairing(summary, track_file,
+                                           meta.get("forecast_init_time_utc")) is None:
+                        mismatch = summary.get("track_init_mismatch") or {}
+                        write_json(track_file, {
+                            "available": False,
+                            "reason": mismatch.get(
+                                "reason", "no usable track for this cycle"),
+                            "cycle_id": summary.get("cycle_id"),
+                            "cycle_issued_utc": meta.get("forecast_init_time_utc"),
+                            "rejected_track_init_time_utc": mismatch.get("track_init_time_utc"),
+                        })
                 else:
                     summary["track_available"] = False
+                    summary["track_init_matches_cycle"] = False
                 existing_cycle_data.update(summary)
                 write_json(meta_file, existing_cycle_data)
                 summaries.append(summary)
