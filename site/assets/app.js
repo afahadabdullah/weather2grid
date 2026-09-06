@@ -18,7 +18,7 @@ const S = {
   // time to pin the view to an archived run.
   selectedInit: null,
   overlays: { states: true, track: true, nhc: false, wind: true, extrapolation: false, threshold: true },
-  view: 'event', zoom: 1, panX: 0, panY: 0, dragging: null,
+  view: 'conus', zoom: 1, panX: 0, panY: 0, dragging: null,
   mapScale: 1, mapBounds: null, mapOrigin: { ox: 0, oy: 0, x0: 0, y0: 0 },
   projectedCounties: [], projectedStates: [],
   needsRedraw: false, hitCanvas: null, hitCtx: null,
@@ -1967,6 +1967,7 @@ function wireMapControls() {
     if (view === 'focus') focusHighestRiskCounty();
     else if (view === 'conus' || view === 'event' || view === 'storm') applyMapView(view);
   }));
+  setViewButtonState(S.view);
 
   $('zoom-in').addEventListener('click', () => zoomMap(1.35));
   $('zoom-out').addEventListener('click', () => zoomMap(1 / 1.35));
