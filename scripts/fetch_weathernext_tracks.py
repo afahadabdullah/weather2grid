@@ -3,8 +3,10 @@
 
 Supports:
 1. Parsing standard ATCF (.dat) cyclone track files from WeatherNext / Weather Lab.
-2. Generating calibrated WeatherNext 2 AI ensemble tracks synchronized to the 
-   WeatherNext 2 6-hourly cycle initializations.
+2. Generating a fixed DEMONSTRATION track (invented, not forecast) for
+   exercising the dashboard's storm overlay. Requires --allow-synthetic.
+   Real live tracks come from `stormgrid fetch-weathernext3-track`, which
+   detects a surface low in the same model run the outage forecast came from.
 3. Exporting to site/data/weathernext-active-tracks.json and per-cycle track.json.
 
 Every track this script writes is tagged with the forecast initialization it
@@ -291,7 +293,29 @@ def main() -> None:
                              "(default: reset them, so no cycle ever shows another init's storm)")
     parser.add_argument("--allow-unpaired", action="store_true",
                         help="Exit 0 even when the resolved init matches no published cycle")
+    parser.add_argument("--allow-synthetic", action="store_true",
+                        help="Permit the built-in demonstration track. Required "
+                             "whenever --atcf is not given, because the built-in "
+                             "track is invented, not forecast.")
     args = parser.parse_args()
+
+    # The generator below produces a fixed, invented Hurricane Marie track. It
+    # exists to exercise the dashboard's storm overlay, and it is fine for
+    # that. It is not fine on a public site presenting real forecasts: a
+    # fabricated hurricane, published beside genuine outage guidance and
+    # labelled with a real initialization, is indistinguishable from a real
+    # forecast to anyone reading the map. The live pipelines never call this
+    # script - they use `stormgrid fetch-weathernext3-track`, which detects a
+    # low from the same model fields the outage forecast came from.
+    if not args.atcf and not args.allow_synthetic:
+        raise SystemExit(
+            "ERROR: without --atcf this script emits an INVENTED demonstration "
+            "track (Hurricane Marie), not a forecast.\n"
+            "  For a real WeatherNext track, run the modelling pipeline:\n"
+            "    stormgrid fetch-weathernext3-track --init <init> --data-root <root>\n"
+            "    (or scripts/run_weathernext3_live.sh, which does it for you)\n"
+            "  To parse a real ATCF file:  --atcf <file.dat>\n"
+            "  To publish the demo track anyway:  --allow-synthetic")
 
     site_data_dir = args.output.parent
     init_dt, cycle_prefix = resolve_weathernext_init(args.init, site_data_dir, version=args.version)
@@ -315,7 +339,11 @@ def main() -> None:
         data["available"] = bool(kept)
     else:
         track = generate_weathernext_marie_track(init_dt, version=args.version)
-        data = {"available": True, "tracks": [track]}
+        track["synthetic"] = True
+        track["name"] = f"{track['name']} [DEMONSTRATION TRACK - NOT A FORECAST]"
+        data = {"available": True, "synthetic": True, "tracks": [track]}
+        print("WARNING: publishing the invented demonstration track "
+              "(--allow-synthetic).")
 
     # Initialization provenance on the index itself, so a consumer can pair
     # without opening each track.
