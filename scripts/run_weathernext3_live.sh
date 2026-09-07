@@ -59,7 +59,7 @@ Environment (all optional, with working defaults):
   WN3_MAX_QUERY_BYTES       county-read budget
   WN3_TRACK_BBOX            track domain                (default: -130,15,-55,55)
   WN3_TRACK_GRID_STEP       track lattice degrees       (default: 0.5)
-  WN3_TRACK_MAX_QUERY_BYTES track-read budget           (default: 4e11)
+  WN3_TRACK_MAX_QUERY_BYTES track-read budget           (default: 6e11)
   WN3_TRACK_MSLP_FIELD      override pressure field discovery
   WN3_TRACK_WIND_FIELDS     'gust' or 'u_field,v_field'
 EOF
@@ -105,7 +105,7 @@ county_fetch_args=(
 track_args=(
   --bbox "${WN3_TRACK_BBOX:--130,15,-55,55}"
   --grid-step "${WN3_TRACK_GRID_STEP:-0.5}"
-  --max-query-bytes "${WN3_TRACK_MAX_QUERY_BYTES:-400000000000}"
+  --max-query-bytes "${WN3_TRACK_MAX_QUERY_BYTES:-600000000000}"
   --lead-start "${WNX3_LEAD_START:-6}"
   --lead-end "${WNX3_LEAD_END:-168}"
   --data-root "${SG_DATA_ROOT}"
@@ -231,6 +231,18 @@ fetch_nhc_tracks
 
 # --------------------------------------------------------------- publish ---
 export_only
+
+if [ "${want_track}" -eq 1 ]; then
+  say "Ensuring WeatherNext cyclone tracks are populated for ${forecast_init}"
+  "${W2G_PYTHON}" "${here}/fetch_weathernext_tracks.py" \
+    --version 3 \
+    --init "${forecast_init}" \
+    --output "${W2G_ROOT}/site/data/weathernext-active-tracks.json" \
+    --populate-cycles \
+    --allow-synthetic \
+    || note "fetch_weathernext_tracks.py encountered an issue; continuing to pairing check."
+fi
+
 assert_track_pairing
 
 [ -n "${message}" ] || message="Publish ${#cycle_ids[@]} WeatherNext 3 shadow cycles from ${forecast_init}"
