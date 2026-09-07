@@ -1,8 +1,8 @@
 {
   "version": "0.1.0",
-  "generated_at_utc": "2026-09-07T06:04:43.373668+00:00",
-  "cycles": 8,
-  "cycles_latest_initialization": 8,
+  "generated_at_utc": "2026-09-07T15:43:38.137095+00:00",
+  "cycles": 14,
+  "cycles_latest_initialization": 14,
   "initializations": 2,
   "keep_initializations": 4,
   "archive_base_url": "https://afahadabdullah.github.io/weather2grid-archive",
@@ -13,7 +13,7 @@
   "any_ungated": true,
   "banner": {
     "level": "warning",
-    "title": "REAL-TIME FORECAST \u2014 EXPERIMENTAL",
+    "title": "REAL-TIME FORECAST — EXPERIMENTAL",
     "detail": "The model is running on real-time weather data but has not passed its release gate; do not use it as operational guidance."
   },
   "latest": {
@@ -22,7 +22,7 @@
     "event_name": "CONUS wind outlook",
     "issued_utc": "2026-09-07T01:00:00+00:00",
     "lead_hours": 0.0,
-    "age_hours": 5.08,
+    "age_hours": 14.73,
     "freshness": "not evaluated",
     "synthetic": false,
     "release_gate_passed": false,

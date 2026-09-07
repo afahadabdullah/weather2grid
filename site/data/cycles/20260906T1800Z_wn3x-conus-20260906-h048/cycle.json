@@ -1,10 +1,10 @@
 {
   "cycle_id": "20260906T1800Z_wn3x-conus-20260906-h048",
   "event_id": "wn3x-conus-20260906-h048",
-  "event_name": "CONUS wind outlook \u2014 24 h to +48 h",
+  "event_name": "CONUS wind outlook — 24 h to +48 h (rolling)",
   "issued_utc": "2026-09-06T18:00:00+00:00",
   "lead_hours": 30.0,
-  "age_hours": 12.08,
+  "age_hours": 21.73,
   "freshness": "not evaluated",
   "synthetic": false,
   "release_gate_passed": false,
@@ -25,8 +25,8 @@
   ],
   "lead_step_hours": 6.0,
   "product_window_hours": 24.0,
-  "product_step_hours": 24.0,
-  "windows_overlap": false,
+  "product_step_hours": 12.0,
+  "windows_overlap": true,
   "product_kind": "forecast",
   "hazard_basis": null,
   "has_observed": false,
@@ -112,11 +112,11 @@
     "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
     "hazard_source": "weathernext3_100m_wind_proxy",
     "hazard_source_version": "weathernext_3_0_0_0p1deg",
-    "hazard_model_version": "weathernext3-100m-sustained-wind-proxy-w24h-s24h-0.1deg",
+    "hazard_model_version": "weathernext3-100m-sustained-wind-proxy-w24h-s12h-0.1deg",
     "impact_model_version": "0.1.0",
     "model_artifact_id": "bplus-d306fae20f",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-    "input_provenance_hash": "a0730a0b5ab1be268d7b6c375424aa02",
+    "input_provenance_hash": "0e9b60251d95c803efeb08745f158340",
     "input_lead_hours": [
       30.0,
       36.0,
@@ -125,11 +125,11 @@
     ],
     "lead_step_hours": 6.0,
     "window_hours": 24.0,
-    "step_hours": 24.0,
-    "windows_overlap": false,
+    "step_hours": 12.0,
+    "windows_overlap": true,
     "cycle_id": "20260906T1800Z_wn3x-conus-20260906-h048",
-    "product_provenance_hash": "b3faa7e92ecb508fc9d345fd5aa67d4b",
-    "event_name": "CONUS wind outlook \u2014 24 h to +48 h",
+    "product_provenance_hash": "b086dc0b7820f254b1c80a4b33296ac9",
+    "event_name": "CONUS wind outlook — 24 h to +48 h (rolling)",
     "training_event_exclusions": [
       "OT20251228a36ecc"
     ],
@@ -165,8 +165,7 @@
       "p90_if_independent": 111120.10042300954,
       "tail_understatement_ratio": 1.1275452584872498
     },
-    "generated_utc": "2026-09-07T03:32:33.536516+00:00",
+    "generated_utc": "2026-09-07T15:33:30.977899+00:00",
     "code_version": "0.0.1"
-  },
-  "track_init_time_utc": "2026-09-06T18:00:00+00:00"
+  }
 }

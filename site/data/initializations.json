@@ -15,10 +15,10 @@
     "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
     "issued_utc": "2026-09-06T18:00:00+00:00",
     "is_latest_initialization": true,
-    "cycles": 7,
+    "cycles": 13,
     "horizon_hours": 168.0,
     "product_window_hours": 24.0,
-    "product_step_hours": 24.0,
-    "windows_overlap": false
+    "product_step_hours": 12.0,
+    "windows_overlap": true
   }
 ]
