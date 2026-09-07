@@ -327,6 +327,7 @@ publish_cycles() {
   SG_DATA_ROOT="${SG_DATA_ROOT}" \
   SG_WEATHER2GRID_REPO="${W2G_ROOT}" \
   SG_WEATHER2GRID_ARCHIVE_REPO="${W2G_ARCHIVE_ROOT}" \
+  SG_SKIP_TESTS=1 \
     "${publisher}" ${args[@]+"${args[@]}"}
 }
 
