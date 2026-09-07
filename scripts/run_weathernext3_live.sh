@@ -185,7 +185,7 @@ for label in json.loads(Path(sys.argv[1]).read_text())["window_labels"]:
 PY
 )
 [ "${#window_labels[@]}" -gt 0 ] || die "no windows in ${index_path}" 6
-note "${#window_labels[@]} windows: ${window_labels[0]} .. ${window_labels[-1]}"
+note "${#window_labels[@]} windows: ${window_labels[0]} .. ${window_labels[@]: -1}"
 
 # ----------------------------------------------------------------- track ---
 # Before inference, not after: fetch-weathernext3-track attaches itself to
