@@ -1,10 +1,10 @@
 {
   "cycle_id": "20260906T1800Z_wn3x-conus-20260906-h144",
   "event_id": "wn3x-conus-20260906-h144",
-  "event_name": "CONUS wind outlook — 24 h to +144 h",
+  "event_name": "CONUS wind outlook \u2014 24 h to +144 h",
   "issued_utc": "2026-09-06T18:00:00+00:00",
   "lead_hours": 126.0,
-  "age_hours": 10.81,
+  "age_hours": 12.08,
   "freshness": "not evaluated",
   "synthetic": false,
   "release_gate_passed": false,
@@ -129,7 +129,7 @@
     "windows_overlap": false,
     "cycle_id": "20260906T1800Z_wn3x-conus-20260906-h144",
     "product_provenance_hash": "dd0b8922f3042c94a4ad35e7b8376761",
-    "event_name": "CONUS wind outlook — 24 h to +144 h",
+    "event_name": "CONUS wind outlook \u2014 24 h to +144 h",
     "training_event_exclusions": [
       "OT20251228a36ecc"
     ],
@@ -167,5 +167,6 @@
     },
     "generated_utc": "2026-09-07T03:32:46.537624+00:00",
     "code_version": "0.0.1"
-  }
+  },
+  "track_init_time_utc": "2026-09-06T18:00:00+00:00"
 }
