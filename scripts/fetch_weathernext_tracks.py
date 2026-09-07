@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -107,8 +108,10 @@ def parse_atcf_content(lines: list[str], version: int = 3, preferred_model: str 
         nw = float(parts[16]) if len(parts) > 16 and parts[16].isdigit() else 0.0
         mean_r = round((ne + se + sw + nw) / 4.0, 1) if (ne or se or sw or nw) else 0.0
 
+        raw_name = parts[27].strip().title() if len(parts) > 27 and parts[27].strip() else ""
+
         if storm_id not in tracks_by_id:
-            s_name = known_names.get(storm_id, f"Cyclone {storm_id.upper()}")
+            s_name = raw_name or known_names.get(storm_id, f"Cyclone {storm_id.upper()}")
             tracks_by_id[storm_id] = {
                 "available": True,
                 "source": f"Google DeepMind WeatherNext {version} Cyclones (ATCF {model})",
@@ -121,6 +124,8 @@ def parse_atcf_content(lines: list[str], version: int = 3, preferred_model: str 
                 "current_index": 0,
                 "model_code": model,
             }
+        elif raw_name and "Cyclone" in tracks_by_id[storm_id]["name"]:
+            tracks_by_id[storm_id]["name"] = f"{raw_name} (WeatherNext AI)"
 
         pts_dict = storm_points[storm_id]
         if tau not in pts_dict:
@@ -441,8 +446,17 @@ def main() -> None:
     # Pair the track into every cycle sharing this exact initialization.
     # ------------------------------------------------------------------
     if args.populate_cycles and data.get("tracks") and cycles_dir.exists():
-        # Prefer Marie (EP13) or the track closest to CONUS
-        marie_track = next((t for t in data["tracks"] if t.get("storm_id") == "ep132026"), data["tracks"][0])
+        # Select the storm track with the closest approach to CONUS (e.g. lat > 20, lon > -130)
+        def conus_threat_score(t: dict[str, Any]) -> float:
+            pts = t.get("points", [])
+            if not pts:
+                return float("inf")
+            # Distance proxy to US southwest/Gulf (e.g. 28N, -100W)
+            return min(math.hypot(p["lat"] - 28.0, p["lon"] - (-100.0)) for p in pts)
+
+        primary_track = min(data["tracks"], key=conus_threat_score)
+        print(f"Primary cyclone track paired with CONUS cycles: {primary_track.get('storm_id')} ({primary_track.get('name')})")
+
         for cycle_dir in sorted(cycles_dir.glob(f"{cycle_prefix}*")):
             cycle_json_path = cycle_dir / "cycle.json"
             if not cycle_json_path.exists():
@@ -461,10 +475,10 @@ def main() -> None:
 
             try:
                 lead_h = int(cdata.get("forecast_horizon_hours") or cdata.get("lead_hours") or 24)
-                pts = marie_track["points"]
+                pts = primary_track["points"]
                 best_idx = min(range(len(pts)), key=lambda i: abs(pts[i]["lead_hours"] - lead_h))
 
-                cycle_track = dict(marie_track)
+                cycle_track = dict(primary_track)
                 cycle_track["current_index"] = best_idx
                 cycle_track["cycle_id"] = cdata.get("cycle_id", cycle_dir.name)
                 cycle_track["paired_cycle_issued_utc"] = str(issued)
