@@ -55,7 +55,7 @@ Environment (all optional, with working defaults):
   WN3_BQ_DATASET            linked WeatherNext 3 dataset
   WNX3_LEAD_END             last lead hour              (default: 168)
   WNX3_WINDOW_HOURS         product window              (default: 24)
-  WNX3_STEP_HOURS           product step                (default: 24)
+  WNX3_STEP_HOURS           product step                (default: 12)
   WN3_MAX_QUERY_BYTES       county-read budget
   WN3_TRACK_BBOX            track domain                (default: -130,15,-55,55)
   WN3_TRACK_GRID_STEP       track lattice degrees       (default: 0.5)
@@ -93,7 +93,7 @@ county_fetch_args=(
   --lead-start "${WNX3_LEAD_START:-6}"
   --lead-end "${WNX3_LEAD_END:-168}"
   --window-hours "${WNX3_WINDOW_HOURS:-24}"
-  --step-hours "${WNX3_STEP_HOURS:-24}"
+  --step-hours "${WNX3_STEP_HOURS:-12}"
   --members "${WNX3_PRODUCT_MEMBERS:-1}"
   --max-query-bytes "${WN3_MAX_QUERY_BYTES:-1500000000000}"
   --expected-members "${WN3_EXPECTED_MEMBERS:-1}"
