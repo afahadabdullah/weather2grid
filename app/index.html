@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StormGrid Live Forecast Automation</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: rgba(18, 24, 38, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --ink: #f0f4fc;
+      --ink-muted: #8a99b5;
+      --primary: #00d2ff;
+      --primary-glow: rgba(0, 210, 255, 0.25);
+      --accent-cyan: #38ef7d;
+      --accent-purple: #8a2be2;
+      --color-green: #10b981;
+      --color-green-glow: rgba(16, 185, 129, 0.2);
+      --color-amber: #f59e0b;
+      --color-amber-glow: rgba(245, 158, 11, 0.2);
+      --color-red: #ef4444;
+      --color-red-glow: rgba(239, 68, 68, 0.2);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --mono: "SF Mono", Menlo, Monaco, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: radial-gradient(circle at 50% 0%, #151d30 0%, var(--bg) 70%);
+      color: var(--ink);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+
+    /* Top Bar */
+    header.topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 24px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #00d2ff 0%, #3a7bd5 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      box-shadow: 0 4px 16px var(--primary-glow);
+    }
+    .brand-title h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .brand-title p {
+      font-size: 12px;
+      color: var(--ink-muted);
+      margin-top: 2px;
+    }
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+    }
+    .status-badge.idle { color: var(--ink-muted); }
+    .status-badge.running {
+      color: var(--primary);
+      border-color: var(--primary);
+      box-shadow: 0 0 12px var(--primary-glow);
+    }
+    .status-badge.success {
+      color: var(--color-green);
+      border-color: var(--color-green);
+      box-shadow: 0 0 12px var(--color-green-glow);
+    }
+    .status-badge.failed {
+      color: var(--color-red);
+      border-color: var(--color-red);
+      box-shadow: 0 0 12px var(--color-red-glow);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .status-badge.running .status-dot {
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.7; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.7; }
+    }
+
+    .link-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .link-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Layout */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 24px;
+      flex: 1;
+    }
+    @media (max-width: 1080px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 22px;
+      backdrop-filter: blur(16px);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--ink-muted);
+    }
+
+    /* Hero Action Panel */
+    .hero-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .run-btn {
+      background: linear-gradient(135deg, #00d2ff 0%, #0072ff 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 16px 24px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      box-shadow: 0 6px 24px rgba(0, 114, 255, 0.35);
+      transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .run-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(0, 210, 255, 0.45);
+    }
+    .run-btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+    .run-btn:disabled {
+      background: #2a3449;
+      color: #64748b;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .cancel-btn {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--color-red);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 12px;
+      padding: 14px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+    .cancel-btn:hover {
+      background: rgba(239, 68, 68, 0.25);
+    }
+
+    /* Modular Options */
+    .options-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .option-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      user-select: none;
+      transition: all 0.15s;
+    }
+    .option-pill:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .option-pill input {
+      accent-color: var(--primary);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+    }
+
+    /* Overall Progress Bar */
+    .progress-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .progress-percent {
+      color: var(--primary);
+      font-weight: 700;
+      font-family: var(--mono);
+    }
+    .progress-track {
+      width: 100%;
+      height: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #00d2ff 0%, #38ef7d 100%);
+      border-radius: 6px;
+      transition: width 0.4s ease;
+      box-shadow: 0 0 12px rgba(0, 210, 255, 0.6);
+    }
+
+    /* Stages Stack */
+    .stages-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .stage-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--card-border);
+      transition: all 0.2s;
+    }
+    .stage-item.running {
+      background: rgba(0, 210, 255, 0.05);
+      border-color: rgba(0, 210, 255, 0.3);
+    }
+    .stage-item.success {
+      background: rgba(16, 185, 129, 0.04);
+      border-color: rgba(16, 185, 129, 0.2);
+    }
+    .stage-item.failed {
+      background: rgba(239, 68, 68, 0.05);
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+    .stage-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .stage-icon {
+      font-size: 16px;
+      width: 24px;
+      text-align: center;
+    }
+    .stage-name {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .stage-badge {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-family: var(--mono);
+    }
+    .stage-badge.pending { color: var(--ink-muted); background: rgba(255, 255, 255, 0.05); }
+    .stage-badge.running { color: var(--primary); background: var(--primary-glow); }
+    .stage-badge.success { color: var(--color-green); background: var(--color-green-glow); }
+    .stage-badge.failed { color: var(--color-red); background: var(--color-red-glow); }
+
+    /* Live Terminal Log */
+    .terminal-card {
+      display: flex;
+      flex-direction: column;
+      background: #060911;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 16px;
+      overflow: hidden;
+      height: 480px;
+    }
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 18px;
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .mac-dots {
+      display: flex;
+      gap: 6px;
+    }
+    .mac-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .mac-dot.red { background: #ff5f56; }
+    .mac-dot.yellow { background: #ffbd2e; }
+    .mac-dot.green { background: #27c93f; }
+    .terminal-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--ink-muted);
+      font-family: var(--mono);
+      letter-spacing: 0.04em;
+    }
+    .terminal-controls {
+      display: flex;
+      gap: 8px;
+    }
+    .term-btn {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--ink-muted);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 10px;
+      cursor: pointer;
+      font-family: var(--mono);
+      transition: all 0.15s;
+    }
+    .term-btn:hover {
+      color: var(--ink);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    .terminal-body {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.55;
+      color: #cbd5e1;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-line {
+      margin-bottom: 3px;
+    }
+    .log-line.cyan { color: #38bdf8; }
+    .log-line.green { color: #4ade80; }
+    .log-line.amber { color: #fbbf24; }
+    .log-line.red { color: #f87171; }
+
+    /* Metrics Strip */
+    .metrics-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .metric-label {
+      font-size: 11px;
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .metric-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--ink);
+      font-family: var(--mono);
+    }
+    .metric-sub {
+      font-size: 11px;
+      color: var(--color-green);
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">🌀</div>
+      <div class="brand-title">
+        <h1>StormGrid Live Control Center</h1>
+        <p>Operational Forecast Orchestrator & Live Release Gate</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <div id="status-badge" class="status-badge idle">
+        <div class="status-dot"></div>
+        <span id="status-text">IDLE</span>
+      </div>
+      <div id="elapsed-timer" class="status-badge idle" style="font-family: var(--mono); display: none;">
+        00:00
+      </div>
+      <a href="https://afahadabdullah.github.io/weather2grid/" target="_blank" class="link-btn">
+        🌐 Live Forecast
+      </a>
+      <a href="https://afahadabdullah.github.io/weather2grid-archive/" target="_blank" class="link-btn">
+        🏛️ Archive
+      </a>
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <div class="dashboard-grid">
+
+    <!-- Left Column: Controls & Stages -->
+    <div style="display: flex; flex-direction: column; gap: 24px;">
+
+      <!-- Hero Action Panel -->
+      <div class="card hero-panel">
+        <div class="card-header">
+          <span class="card-title">Forecast Pipelines Execution</span>
+          <span id="current-stage-label" style="font-size: 12px; color: var(--primary); font-weight: 600;">Ready to launch</span>
+        </div>
+
+        <div class="options-row">
+          <label class="option-pill">
+            <input type="checkbox" id="opt-hrrr" checked>
+            <span>NOAA HRRR (AWS)</span>
+          </label>
+          <label class="option-pill">
+            <input type="checkbox" id="opt-wnx3" checked>
+            <span>WeatherNext 3</span>
+          </label>
+          <label class="option-pill">
+            <input type="checkbox" id="opt-cyclones" checked>
+            <span>ATCF Cyclone Track</span>
+          </label>
+          <label class="option-pill">
+            <input type="checkbox" id="opt-push" checked>
+            <span>Deploy to GitHub</span>
+          </label>
+        </div>
+
+        <button id="run-btn" class="run-btn" onclick="startPipeline()">
+          <span>🚀</span>
+          <span>Launch Live Refresh & Deploy</span>
+        </button>
+
+        <button id="cancel-btn" class="cancel-btn" onclick="cancelPipeline()">
+          <span>⏹</span>
+          <span>Abort Pipeline Execution</span>
+        </button>
+
+        <div class="progress-section">
+          <div class="progress-header">
+            <span id="progress-desc">Overall Pipeline Progress</span>
+            <span id="progress-percent" class="progress-percent">0%</span>
+          </div>
+          <div class="progress-track">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage Cards -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Pipeline Stages</span>
+          <span id="stages-count" style="font-size: 12px; color: var(--ink-muted);">0 / 7 Completed</span>
+        </div>
+
+        <div id="stages-list" class="stages-list">
+          <!-- Injected dynamically by JS -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right Column: Live Terminal Output -->
+    <div style="display: flex; flex-direction: column; gap: 24px;">
+      <div class="terminal-card">
+        <div class="terminal-header">
+          <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+          </div>
+          <div class="terminal-title">LIVE STREAMING CONSOLE LOGS</div>
+          <div class="terminal-controls">
+            <button class="term-btn" onclick="toggleAutoScroll()" id="autoscroll-btn">Auto-scroll: ON</button>
+            <button class="term-btn" onclick="clearLogs()">Clear</button>
+          </div>
+        </div>
+        <div id="terminal-body" class="terminal-body">
+          <div class="log-line cyan">[SYSTEM] Control Center initialized. Ready to execute live pipelines.</div>
+        </div>
+      </div>
+
+      <!-- Metrics Cards -->
+      <div class="metrics-strip" style="margin-top: 0;">
+        <div class="metric-card">
+          <div class="metric-label">NOAA HRRR Init</div>
+          <div id="metric-hrrr" class="metric-value">--</div>
+          <div class="metric-sub">0-18h Horizon</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">WeatherNext 3 Init</div>
+          <div id="metric-wnx3" class="metric-value">--</div>
+          <div class="metric-sub">13 Rolling Windows</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Cyclone Tracking</div>
+          <div id="metric-cyclones" class="metric-value" style="font-size: 14px;">--</div>
+          <div class="metric-sub">NOAA ATCF & Weather Lab</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Published Cycles</div>
+          <div id="metric-cycles" class="metric-value">--</div>
+          <div class="metric-sub" id="metric-archived">-- Archived</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    let autoScroll = true;
+    let pollTimer = null;
+    let sseSource = null;
+
+    const STAGE_ICONS = {
+      preflight: "⚙️",
+      hrrr: "⚡",
+      wnx3: "🌐",
+      cyclones: "🌀",
+      export_archive: "📦",
+      verification: "🛡️",
+      deploy: "🚀"
+    };
+
+    function init() {
+      setupSSE();
+      pollStatus();
+      pollTimer = setInterval(pollStatus, 1500);
+      fetchMetrics();
+    }
+
+    function setupSSE() {
+      if (sseSource) sseSource.close();
+      sseSource = new EventSource('/api/logs');
+      sseSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          appendLog(data.message);
+        } catch (e) {}
+      };
+    }
+
+    function appendLog(line) {
+      const term = document.getElementById('terminal-body');
+      const div = document.createElement('div');
+      div.className = 'log-line';
+
+      if (line.includes('-->') || line.includes('Stage')) div.classList.add('cyan');
+      else if (line.includes('SUCCESS') || line.includes('PASS') || line.includes('🎉')) div.classList.add('green');
+      else if (line.includes('Warning:') || line.includes('WARN')) div.classList.add('amber');
+      else if (line.includes('ERROR') || line.includes('FATAL') || line.includes('failed')) div.classList.add('red');
+
+      div.textContent = line;
+      term.appendChild(div);
+
+      if (autoScroll) {
+        term.scrollTop = term.scrollHeight;
+      }
+    }
+
+    function toggleAutoScroll() {
+      autoScroll = !autoScroll;
+      document.getElementById('autoscroll-btn').textContent = `Auto-scroll: ${autoScroll ? 'ON' : 'OFF'}`;
+    }
+
+    function clearLogs() {
+      document.getElementById('terminal-body').innerHTML = '';
+    }
+
+    async function pollStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const state = await res.json();
+        renderStatus(state);
+      } catch (e) {}
+    }
+
+    function renderStatus(state) {
+      // Badge
+      const badge = document.getElementById('status-badge');
+      const statusText = document.getElementById('status-text');
+      badge.className = `status-badge ${state.status}`;
+      statusText.textContent = state.status.toUpperCase();
+
+      // Timer
+      const timer = document.getElementById('elapsed-timer');
+      if (state.status === 'running') {
+        timer.style.display = 'inline-flex';
+        const mins = String(Math.floor(state.elapsed_seconds / 60)).padStart(2, '0');
+        const secs = String(state.elapsed_seconds % 60).padStart(2, '0');
+        timer.textContent = `${mins}:${secs}`;
+      } else {
+        timer.style.display = 'none';
+      }
+
+      // Buttons
+      const runBtn = document.getElementById('run-btn');
+      const cancelBtn = document.getElementById('cancel-btn');
+      if (state.status === 'running') {
+        runBtn.disabled = true;
+        cancelBtn.style.display = 'flex';
+        document.getElementById('current-stage-label').textContent = state.current_stage || 'Executing...';
+      } else {
+        runBtn.disabled = false;
+        cancelBtn.style.display = 'none';
+        document.getElementById('current-stage-label').textContent =
+          state.status === 'success' ? 'All pipelines completed successfully' :
+          state.status === 'failed' ? 'Pipeline error occurred' : 'Ready to launch';
+      }
+
+      // Progress Bar
+      document.getElementById('progress-percent').textContent = `${state.progress}%`;
+      document.getElementById('progress-fill').style.width = `${state.progress}%`;
+
+      // Stages List
+      const list = document.getElementById('stages-list');
+      list.innerHTML = '';
+      let completedCount = 0;
+
+      state.stages.forEach((st) => {
+        if (st.status === 'success') completedCount++;
+        const item = document.createElement('div');
+        item.className = `stage-item ${st.status}`;
+        item.innerHTML = `
+          <div class="stage-info">
+            <span class="stage-icon">${STAGE_ICONS[st.id] || '🔹'}</span>
+            <span class="stage-name">${st.name}</span>
+          </div>
+          <span class="stage-badge ${st.status}">${st.status}</span>
+        `;
+        list.appendChild(item);
+      });
+
+      document.getElementById('stages-count').textContent = `${completedCount} / ${state.stages.length} Completed`;
+
+      if (state.metrics) {
+        if (state.metrics.hrrr_init) document.getElementById('metric-hrrr').textContent = state.metrics.hrrr_init.slice(5, 16).replace('T', ' ');
+        if (state.metrics.wnx3_init) document.getElementById('metric-wnx3').textContent = state.metrics.wnx3_init.slice(5, 16).replace('T', ' ');
+        if (state.metrics.cyclones && state.metrics.cyclones.length) {
+          document.getElementById('metric-cyclones').textContent = state.metrics.cyclones.join(', ');
+        }
+        if (state.metrics.published_cycles) {
+          document.getElementById('metric-cycles').textContent = `${state.metrics.published_cycles} Live`;
+          document.getElementById('metric-archived').textContent = `${state.metrics.archived_cycles} Archived`;
+        }
+      }
+    }
+
+    async function fetchMetrics() {
+      try {
+        const res = await fetch('/api/latest');
+        const data = await res.json();
+        if (data.cycles && data.cycles.length) {
+          const hrrr = data.cycles.find(c => c.cycle_id.includes('hrrr'));
+          const wnx = data.cycles.find(c => c.cycle_id.includes('wn3'));
+          if (hrrr) document.getElementById('metric-hrrr').textContent = hrrr.issued_utc.slice(5, 16).replace('T', ' ');
+          if (wnx) document.getElementById('metric-wnx3').textContent = wnx.issued_utc.slice(5, 16).replace('T', ' ');
+          document.getElementById('metric-cycles').textContent = `${data.cycles.length} Live`;
+          document.getElementById('metric-archived').textContent = `${data.archived_count} Archived`;
+        }
+      } catch (e) {}
+    }
+
+    async function startPipeline() {
+      const options = {
+        hrrr: document.getElementById('opt-hrrr').checked,
+        wnx3: document.getElementById('opt-wnx3').checked,
+        cyclones: document.getElementById('opt-cyclones').checked,
+        push: document.getElementById('opt-push').checked,
+      };
+
+      try {
+        const res = await fetch('/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(options)
+        });
+        const data = await res.json();
+        if (data.success) {
+          pollStatus();
+        }
+      } catch (e) {
+        alert('Could not start pipeline: ' + e.message);
+      }
+    }
+
+    async function cancelPipeline() {
+      try {
+        await fetch('/api/stop', { method: 'POST' });
+        pollStatus();
+      } catch (e) {}
+    }
+
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
