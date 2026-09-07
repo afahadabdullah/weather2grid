@@ -297,7 +297,8 @@ def _apply_retention(summaries: list[dict[str, Any]], staging: Path,
             # latest simply because it is the only run of its own series.
             summary["is_latest_initialization"] = (
                 value == newest
-                and summary.get("product_kind", "forecast") != "hindcast")
+                and summary.get("product_kind", "forecast") != "hindcast"
+                and not summary.get("_archived", False))
             if value in retained:
                 kept.append(summary)
             else:
@@ -753,6 +754,7 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
             seen_ids = {s["cycle_id"] for s in summaries}
             for item in archived_existing:
                 if item.get("cycle_id") not in seen_ids:
+                    item["_archived"] = True
                     summaries.append(item)
                     seen_ids.add(item["cycle_id"])
         except (OSError, json.JSONDecodeError):
@@ -763,9 +765,6 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
         _relocate_archived_cycles(summaries, staging, archive_output,
                                   archive_base_url,
                                   include_latest=offload_current)
-    # Runs after relocation, and over ALL summaries: an archived cycle still
-    # references its geometry, which stays in the main repository.
-    _discard_unreferenced_geometries(summaries, staging)
     # Newest initialization first, and within one initialization the nearest
     # window first. The old cycle_id sort put the FARTHEST window at index 0,
     # which made status.json's "latest" the seven-day frame; harmless while the
@@ -781,6 +780,7 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
     # public index contains only current runs. Older runs receive their own
     # archive dashboard below instead of appearing in the live init picker.
     public_summaries = latest_only if archive_output is not None else summaries
+    _discard_unreferenced_geometries(public_summaries, staging)
     initializations = initialization_index(public_summaries)
     # Banner state describes the CURRENT forecast. An archived run that was
     # synthetic must not make today's real product claim synthetic, and an
