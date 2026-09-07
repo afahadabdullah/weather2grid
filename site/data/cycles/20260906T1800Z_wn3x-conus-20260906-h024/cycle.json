@@ -1,10 +1,10 @@
 {
-  "cycle_id": "20260905T1200Z_wn3x-conus-20260905-h120",
-  "event_id": "wn3x-conus-20260905-h120",
-  "event_name": "CONUS 7-day wind outlook — 24 h to +120 h",
-  "issued_utc": "2026-09-05T12:00:00+00:00",
-  "lead_hours": 102.0,
-  "age_hours": 39.36,
+  "cycle_id": "20260906T1800Z_wn3x-conus-20260906-h024",
+  "event_id": "wn3x-conus-20260906-h024",
+  "event_name": "CONUS wind outlook — 24 h to +24 h",
+  "issued_utc": "2026-09-06T18:00:00+00:00",
+  "lead_hours": 6.0,
+  "age_hours": 10.2,
   "freshness": "not evaluated",
   "synthetic": false,
   "release_gate_passed": false,
@@ -13,15 +13,15 @@
   "model_artifact_id": "bplus-d306fae20f",
   "hazard_source": "weathernext3_100m_wind_proxy",
   "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
-  "valid_start_utc": "2026-09-09T18:00:00+00:00",
-  "valid_end_utc": "2026-09-10T12:00:00+00:00",
+  "valid_start_utc": "2026-09-07T00:00:00+00:00",
+  "valid_end_utc": "2026-09-07T18:00:00+00:00",
   "forecast_window_hours": 18.0,
-  "forecast_horizon_hours": 120.0,
+  "forecast_horizon_hours": 24.0,
   "input_lead_hours": [
-    102.0,
-    108.0,
-    114.0,
-    120.0
+    6.0,
+    12.0,
+    18.0,
+    24.0
   ],
   "lead_step_hours": 6.0,
   "product_window_hours": 24.0,
@@ -34,8 +34,9 @@
   "display_frame_count": 1,
   "county_data_format": "w2g-columnar-v1",
   "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-  "geometry_path": "geometries/620f10a177ab8e17.geojson",
-  "track_available": true,
+  "geometry_path": "geometries/25e848ce7e2a2681.geojson",
+  "track_available": false,
+  "track_init_matches_cycle": false,
   "fields": {
     "required": [
       "county_fips",
@@ -102,12 +103,12 @@
   "meta": {
     "schema_version": "0.1.0",
     "geography_version": "2024-tiger-cb",
-    "event_id": "wn3x-conus-20260905-h120",
+    "event_id": "wn3x-conus-20260906-h024",
     "event_type": "other_wind",
-    "forecast_init_time_utc": "2026-09-05T12:00:00+00:00",
-    "valid_start_utc": "2026-09-09T18:00:00+00:00",
-    "valid_end_utc": "2026-09-10T12:00:00+00:00",
-    "lead_hours": 102.0,
+    "forecast_init_time_utc": "2026-09-06T18:00:00+00:00",
+    "valid_start_utc": "2026-09-07T00:00:00+00:00",
+    "valid_end_utc": "2026-09-07T18:00:00+00:00",
+    "lead_hours": 6.0,
     "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
     "hazard_source": "weathernext3_100m_wind_proxy",
     "hazard_source_version": "weathernext_3_0_0_0p1deg",
@@ -115,20 +116,20 @@
     "impact_model_version": "0.1.0",
     "model_artifact_id": "bplus-d306fae20f",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-    "input_provenance_hash": "9fa5b6ced59b35eb95d6b8b6501fd00f",
+    "input_provenance_hash": "21256e09f9cf8c0a37ec2e441fe43d54",
     "input_lead_hours": [
-      102.0,
-      108.0,
-      114.0,
-      120.0
+      6.0,
+      12.0,
+      18.0,
+      24.0
     ],
     "lead_step_hours": 6.0,
     "window_hours": 24.0,
     "step_hours": 24.0,
     "windows_overlap": false,
-    "cycle_id": "20260905T1200Z_wn3x-conus-20260905-h120",
-    "product_provenance_hash": "85f23decad0c09df5dfb30a1f56a7c4d",
-    "event_name": "CONUS 7-day wind outlook — 24 h to +120 h",
+    "cycle_id": "20260906T1800Z_wn3x-conus-20260906-h024",
+    "product_provenance_hash": "fe1f923dd9aefd37f04c4b3cab9c3817",
+    "event_name": "CONUS wind outlook — 24 h to +24 h",
     "training_event_exclusions": [
       "OT20251228a36ecc"
     ],
@@ -152,21 +153,19 @@
     "eligibility": {
       "allowed": true,
       "basis": "chronological",
-      "detail": "cutoff 2026-01-01T00:00:00+00:00 < event start 2026-09-09T18:00:00+00:00"
+      "detail": "cutoff 2026-01-01T00:00:00+00:00 < event start 2026-09-07T00:00:00+00:00"
     },
     "members": 1,
-    "counties": 3090,
+    "counties": 3098,
     "regional": {
-      "expected": 69303.64913923878,
-      "p50": 62021.43537108983,
-      "p90": 101769.64772695315,
-      "p99": 179392.22227968718,
-      "p90_if_independent": 105154.15057143032,
-      "tail_understatement_ratio": 0.9678138920234242
+      "expected": 87909.76512061534,
+      "p50": 78434.17272322907,
+      "p90": 129432.6809802945,
+      "p99": 301604.89309867594,
+      "p90_if_independent": 125521.41830102172,
+      "tail_understatement_ratio": 1.0311601217721498
     },
-    "generated_utc": "2026-09-05T19:42:20.365130+00:00",
+    "generated_utc": "2026-09-07T03:32:30.145994+00:00",
     "code_version": "0.0.1"
-  },
-  "track_init_time_utc": "2026-09-05T12:00:00+00:00",
-  "track_init_matches_cycle": true
+  }
 }

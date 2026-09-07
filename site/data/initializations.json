@@ -13,7 +13,7 @@
   {
     "hazard_source": "weathernext3_100m_wind_proxy",
     "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
-    "issued_utc": "2026-09-05T12:00:00+00:00",
+    "issued_utc": "2026-09-06T18:00:00+00:00",
     "is_latest_initialization": true,
     "cycles": 7,
     "horizon_hours": 168.0,

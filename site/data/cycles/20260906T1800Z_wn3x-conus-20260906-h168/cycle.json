@@ -1,10 +1,10 @@
 {
-  "cycle_id": "20260905T1200Z_wn3x-conus-20260905-h168",
-  "event_id": "wn3x-conus-20260905-h168",
-  "event_name": "CONUS 7-day wind outlook — 24 h to +168 h",
-  "issued_utc": "2026-09-05T12:00:00+00:00",
+  "cycle_id": "20260906T1800Z_wn3x-conus-20260906-h168",
+  "event_id": "wn3x-conus-20260906-h168",
+  "event_name": "CONUS wind outlook — 24 h to +168 h",
+  "issued_utc": "2026-09-06T18:00:00+00:00",
   "lead_hours": 150.0,
-  "age_hours": 39.36,
+  "age_hours": 10.2,
   "freshness": "not evaluated",
   "synthetic": false,
   "release_gate_passed": false,
@@ -13,8 +13,8 @@
   "model_artifact_id": "bplus-d306fae20f",
   "hazard_source": "weathernext3_100m_wind_proxy",
   "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
-  "valid_start_utc": "2026-09-11T18:00:00+00:00",
-  "valid_end_utc": "2026-09-12T12:00:00+00:00",
+  "valid_start_utc": "2026-09-13T00:00:00+00:00",
+  "valid_end_utc": "2026-09-13T18:00:00+00:00",
   "forecast_window_hours": 18.0,
   "forecast_horizon_hours": 168.0,
   "input_lead_hours": [
@@ -34,8 +34,9 @@
   "display_frame_count": 1,
   "county_data_format": "w2g-columnar-v1",
   "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-  "geometry_path": "geometries/620f10a177ab8e17.geojson",
-  "track_available": true,
+  "geometry_path": "geometries/25e848ce7e2a2681.geojson",
+  "track_available": false,
+  "track_init_matches_cycle": false,
   "fields": {
     "required": [
       "county_fips",
@@ -102,11 +103,11 @@
   "meta": {
     "schema_version": "0.1.0",
     "geography_version": "2024-tiger-cb",
-    "event_id": "wn3x-conus-20260905-h168",
+    "event_id": "wn3x-conus-20260906-h168",
     "event_type": "other_wind",
-    "forecast_init_time_utc": "2026-09-05T12:00:00+00:00",
-    "valid_start_utc": "2026-09-11T18:00:00+00:00",
-    "valid_end_utc": "2026-09-12T12:00:00+00:00",
+    "forecast_init_time_utc": "2026-09-06T18:00:00+00:00",
+    "valid_start_utc": "2026-09-13T00:00:00+00:00",
+    "valid_end_utc": "2026-09-13T18:00:00+00:00",
     "lead_hours": 150.0,
     "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
     "hazard_source": "weathernext3_100m_wind_proxy",
@@ -115,7 +116,7 @@
     "impact_model_version": "0.1.0",
     "model_artifact_id": "bplus-d306fae20f",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-    "input_provenance_hash": "348f9d19c3fd8503f840274acd213277",
+    "input_provenance_hash": "238916627b39832f72c8165d1e3fa9aa",
     "input_lead_hours": [
       150.0,
       156.0,
@@ -126,9 +127,9 @@
     "window_hours": 24.0,
     "step_hours": 24.0,
     "windows_overlap": false,
-    "cycle_id": "20260905T1200Z_wn3x-conus-20260905-h168",
-    "product_provenance_hash": "c34d5349bd41565ebe25b2ac578fa953",
-    "event_name": "CONUS 7-day wind outlook — 24 h to +168 h",
+    "cycle_id": "20260906T1800Z_wn3x-conus-20260906-h168",
+    "product_provenance_hash": "e108772c576c4c7132b67e2e3f0c469a",
+    "event_name": "CONUS wind outlook — 24 h to +168 h",
     "training_event_exclusions": [
       "OT20251228a36ecc"
     ],
@@ -152,21 +153,19 @@
     "eligibility": {
       "allowed": true,
       "basis": "chronological",
-      "detail": "cutoff 2026-01-01T00:00:00+00:00 < event start 2026-09-11T18:00:00+00:00"
+      "detail": "cutoff 2026-01-01T00:00:00+00:00 < event start 2026-09-13T00:00:00+00:00"
     },
     "members": 1,
-    "counties": 3090,
+    "counties": 3098,
     "regional": {
-      "expected": 34209.31553482404,
-      "p50": 26381.220249479913,
-      "p90": 54319.05118195009,
-      "p99": 163376.35276230334,
-      "p90_if_independent": 53253.741614524624,
-      "tail_understatement_ratio": 1.02000440786183
+      "expected": 49366.256126633874,
+      "p50": 38729.48348907524,
+      "p90": 86067.54840092213,
+      "p99": 192647.4914315926,
+      "p90_if_independent": 72547.11001298357,
+      "tail_understatement_ratio": 1.1863677048681724
     },
-    "generated_utc": "2026-09-05T19:43:20.440660+00:00",
+    "generated_utc": "2026-09-07T03:32:49.746547+00:00",
     "code_version": "0.0.1"
-  },
-  "track_init_time_utc": "2026-09-05T12:00:00+00:00",
-  "track_init_matches_cycle": true
+  }
 }
