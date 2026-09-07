@@ -574,15 +574,16 @@ def _write_archive_dashboard(archive_output: Path,
     (archive_output / ".nojekyll").touch()
 
     archive_data = archive_output / "data"
-    shutil.rmtree(archive_data, ignore_errors=True)
-    archive_data.mkdir(parents=True)
+    archive_data.mkdir(parents=True, exist_ok=True)
     for name in ("basemap.geojson", "nhc-active-tracks.json",
                  "weathernext-active-tracks.json", "live-outage-status.json"):
         source = staging / name
         if source.exists():
             shutil.copyfile(source, archive_data / name)
     if (staging / "geometries").exists():
-        shutil.copytree(staging / "geometries", archive_data / "geometries")
+        (archive_data / "geometries").mkdir(parents=True, exist_ok=True)
+        for g in (staging / "geometries").glob("*.geojson"):
+            shutil.copyfile(g, archive_data / "geometries" / g.name)
 
     archived.sort(key=lambda item: (-_issued_value(item),
                                     str(item.get("valid_start_utc") or ""),
@@ -744,6 +745,18 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
                 existing_cycle_data.update(summary)
                 write_json(meta_file, existing_cycle_data)
                 summaries.append(summary)
+
+    if merge and archive_output is not None and (archive_output / "data" / "cycles.json").exists():
+        try:
+            archived_existing = json.loads(
+                (archive_output / "data" / "cycles.json").read_text(encoding="utf-8"))
+            seen_ids = {s["cycle_id"] for s in summaries}
+            for item in archived_existing:
+                if item.get("cycle_id") not in seen_ids:
+                    summaries.append(item)
+                    seen_ids.add(item["cycle_id"])
+        except (OSError, json.JSONDecodeError):
+            pass
 
     summaries = _apply_retention(summaries, staging, keep_initializations)
     if archive_output is not None:
