@@ -273,11 +273,17 @@ assert_no_init_regression() {
   [ -n "${LIVE_INITS_BEFORE}" ] || return 0
   say "Checking no published initialization was dropped"
   local after lost
-  after="$("${W2G_PYTHON}" - "${W2G_ROOT}/site/data/cycles.json" <<'PY'
+  after="$("${W2G_PYTHON}" - "${W2G_ROOT}/site/data/cycles.json" "${W2G_ARCHIVE_ROOT}/data/cycles.json" <<'PY'
 import json, sys
 from pathlib import Path
-print("\n".join(sorted({c["issued_utc"] for c in
-                        json.loads(Path(sys.argv[1]).read_text())})))
+site_path = Path(sys.argv[1])
+archive_path = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+inits = set()
+if site_path.is_file():
+    inits.update(c["issued_utc"] for c in json.loads(site_path.read_text()))
+if archive_path and archive_path.is_file():
+    inits.update(c["issued_utc"] for c in json.loads(archive_path.read_text()))
+print("\n".join(sorted(inits)))
 PY
 )"
   lost="$(comm -23 <(printf '%s\n' "${LIVE_INITS_BEFORE}") <(printf '%s\n' "${after}") || true)"
