@@ -1,10 +1,10 @@
 {
   "cycle_id": "20260905T1200Z_wn3x-conus-20260905-h048",
   "event_id": "wn3x-conus-20260905-h048",
-  "event_name": "CONUS 7-day wind outlook \u2014 24 h to +48 h",
+  "event_name": "CONUS 7-day wind outlook — 24 h to +48 h",
   "issued_utc": "2026-09-05T12:00:00+00:00",
   "lead_hours": 30.0,
-  "age_hours": 8.65,
+  "age_hours": 39.36,
   "freshness": "not evaluated",
   "synthetic": false,
   "release_gate_passed": false,
@@ -128,7 +128,7 @@
     "windows_overlap": false,
     "cycle_id": "20260905T1200Z_wn3x-conus-20260905-h048",
     "product_provenance_hash": "91e899cfcd7f1d40efae083ef4c143a6",
-    "event_name": "CONUS 7-day wind outlook \u2014 24 h to +48 h",
+    "event_name": "CONUS 7-day wind outlook — 24 h to +48 h",
     "training_event_exclusions": [
       "OT20251228a36ecc"
     ],
