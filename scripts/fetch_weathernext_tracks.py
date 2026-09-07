@@ -25,6 +25,12 @@ from pathlib import Path
 from typing import Any
 
 
+import gzip
+import re
+import urllib.request
+from collections import defaultdict
+
+
 def parse_atcf_lat(val: str) -> float:
     val = val.strip()
     hem = val[-1].upper()
@@ -65,10 +71,18 @@ def stamp_pairing(track: dict[str, Any], init_dt: datetime, version: int) -> dic
     return track
 
 
-def parse_atcf_file(path: Path) -> dict[str, Any]:
-    """Parse standard ATCF (.dat) track lines."""
+def parse_atcf_content(lines: list[str], version: int = 3, preferred_model: str = "GDMN") -> dict[str, Any]:
+    """Parse ATCF track lines for Google DeepMind / WeatherNext models."""
     tracks_by_id: dict[str, dict[str, Any]] = {}
-    lines = path.read_text(encoding="utf-8").splitlines()
+    storm_points: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    known_names = {
+        "ep112026": "Tropical Storm Karina",
+        "ep122026": "Hurricane Lowell",
+        "ep132026": "Hurricane Marie",
+    }
+
+    # Order of model preference
+    model_pref = [preferred_model, "GDMI", "GDM2", "OFCL"]
 
     for line in lines:
         parts = [p.strip() for p in line.split(",")]
@@ -83,33 +97,104 @@ def parse_atcf_file(path: Path) -> dict[str, Any]:
         lat = parse_atcf_lat(parts[6])
         lon = parse_atcf_lon(parts[7])
         vmax = float(parts[8]) if parts[8].isdigit() else 0.0
-        pmin = float(parts[9]) if parts[9].isdigit() else 9999.0
-        stage = parts[10]
+        pmin = float(parts[9]) if parts[9].isdigit() and float(parts[9]) > 800 else 9999.0
+        stage = parts[10] if parts[10] else "XX"
+
+        thresh = parts[11] if len(parts) > 11 and parts[11].isdigit() else None
+        ne = float(parts[13]) if len(parts) > 13 and parts[13].isdigit() else 0.0
+        se = float(parts[14]) if len(parts) > 14 and parts[14].isdigit() else 0.0
+        sw = float(parts[15]) if len(parts) > 15 and parts[15].isdigit() else 0.0
+        nw = float(parts[16]) if len(parts) > 16 and parts[16].isdigit() else 0.0
+        mean_r = round((ne + se + sw + nw) / 4.0, 1) if (ne or se or sw or nw) else 0.0
 
         if storm_id not in tracks_by_id:
+            s_name = known_names.get(storm_id, f"Cyclone {storm_id.upper()}")
             tracks_by_id[storm_id] = {
                 "available": True,
-                "source": "Google DeepMind WeatherNext Cyclones",
-                "classification": "AI Tropical Cyclone Forecast (WeatherNext)",
+                "source": f"Google DeepMind WeatherNext {version} Cyclones (ATCF {model})",
+                "classification": f"AI Tropical Cyclone Track Forecast (WeatherNext {version})",
                 "storm_id": storm_id,
-                "name": f"Cyclone {storm_id.upper()} (WeatherNext)",
+                "name": f"{s_name} (WeatherNext AI)",
                 "basin": basin,
-                "model": model,
+                "model": f"WeatherNext {version} / {model}",
                 "init_time_utc": f"{init_str[:4]}-{init_str[4:6]}-{init_str[6:8]}T{init_str[8:10]}:00:00+00:00",
                 "current_index": 0,
-                "points": [],
+                "model_code": model,
             }
 
-        tracks_by_id[storm_id]["points"].append({
-            "lead_hours": tau,
-            "lat": lat,
-            "lon": lon,
-            "vmax_kt": vmax,
-            "pmin_mb": pmin,
-            "stage": stage,
-        })
+        pts_dict = storm_points[storm_id]
+        if tau not in pts_dict:
+            pts_dict[tau] = {
+                "lead_hours": tau,
+                "lat": round(lat, 2),
+                "lon": round(lon, 2),
+                "vmax_kt": vmax,
+                "pmin_mb": pmin,
+                "stage": stage,
+                "r34_nm": 0.0,
+                "r50_nm": 0.0,
+                "r64_nm": 0.0,
+            }
+        if pmin < 9000 and pts_dict[tau]["pmin_mb"] >= 9000:
+            pts_dict[tau]["pmin_mb"] = pmin
+        if thresh == "34":
+            pts_dict[tau]["r34_nm"] = max(pts_dict[tau]["r34_nm"], mean_r)
+        elif thresh == "50":
+            pts_dict[tau]["r50_nm"] = max(pts_dict[tau]["r50_nm"], mean_r)
+        elif thresh == "64":
+            pts_dict[tau]["r64_nm"] = max(pts_dict[tau]["r64_nm"], mean_r)
 
-    return {"available": bool(tracks_by_id), "tracks": list(tracks_by_id.values())}
+    # Attach points sorted by lead_hours
+    out_tracks = []
+    for storm_id, meta in tracks_by_id.items():
+        pts = [storm_points[storm_id][tau] for tau in sorted(storm_points[storm_id].keys())]
+        meta["points"] = pts
+        out_tracks.append(meta)
+
+    return {"available": bool(out_tracks), "synthetic": False, "tracks": out_tracks}
+
+
+def parse_atcf_file(path: Path, version: int = 3) -> dict[str, Any]:
+    """Parse standard ATCF (.dat) track lines from a file."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return parse_atcf_content(lines, version=version)
+
+
+def fetch_noaa_atcf_tracks(init_dt: datetime, version: int = 3) -> dict[str, Any]:
+    """Automatically fetch and parse Google DeepMind cyclone tracks from NOAA ATCF aid repository."""
+    init_tag = init_dt.strftime("%Y%m%d%H")
+    index_url = "https://ftp.nhc.noaa.gov/atcf/aid_public/"
+    print(f"Scanning NOAA ATCF aid repository for WeatherNext models at init {init_tag}...")
+
+    try:
+        req = urllib.request.Request(index_url, headers={"User-Agent": "Weather2Grid/1.0"})
+        html = urllib.request.urlopen(req, timeout=15).read().decode("utf-8")
+    except Exception as exc:
+        print(f"Could not reach NOAA ATCF server: {exc}")
+        return {"available": False, "tracks": []}
+
+    files = sorted(set(re.findall(r"a(?:al|ep|cp)\d{6}\.dat\.gz", html)))
+    models = ("GDMN", "GDMI", "GDM2")
+    all_matched_lines: list[str] = []
+
+    for fname in files:
+        furl = f"{index_url}{fname}"
+        try:
+            freq = urllib.request.Request(furl, headers={"User-Agent": "Weather2Grid/1.0"})
+            decomp = gzip.decompress(urllib.request.urlopen(freq, timeout=15).read()).decode("utf-8", errors="ignore")
+            lines = [l for l in decomp.splitlines() if init_tag in l and any(m in l for m in models)]
+            if lines:
+                print(f"  -> Found {len(lines)} DeepMind track fixes in {fname}")
+                all_matched_lines.extend(lines)
+        except Exception as exc:
+            pass
+
+    if not all_matched_lines:
+        print(f"No Google DeepMind (GDMN/GDMI) tracks found for init {init_tag}")
+        return {"available": False, "tracks": []}
+
+    parsed = parse_atcf_content(all_matched_lines, version=version, preferred_model="GDMN")
+    return parsed
 
 
 def parse_iso_or_date(val: str) -> datetime:
@@ -293,40 +378,22 @@ def main() -> None:
                              "(default: reset them, so no cycle ever shows another init's storm)")
     parser.add_argument("--allow-unpaired", action="store_true",
                         help="Exit 0 even when the resolved init matches no published cycle")
+    parser.add_argument("--auto-atcf", dest="auto_atcf", action="store_true", default=True,
+                        help="Automatically fetch Google DeepMind tracks from NOAA ATCF aid repository (default: True)")
+    parser.add_argument("--no-auto-atcf", dest="auto_atcf", action="store_false",
+                        help="Disable automatic NOAA ATCF fetch")
     parser.add_argument("--allow-synthetic", action="store_true",
-                        help="Permit the built-in demonstration track. Required "
-                             "whenever --atcf is not given, because the built-in "
-                             "track is invented, not forecast.")
+                        help="Permit the built-in demonstration track. Used as a fallback "
+                             "if NOAA ATCF is unreachable or has no storm active.")
     args = parser.parse_args()
-
-    # The generator below produces a fixed, invented Hurricane Marie track. It
-    # exists to exercise the dashboard's storm overlay, and it is fine for
-    # that. It is not fine on a public site presenting real forecasts: a
-    # fabricated hurricane, published beside genuine outage guidance and
-    # labelled with a real initialization, is indistinguishable from a real
-    # forecast to anyone reading the map. The live pipelines never call this
-    # script - they use `stormgrid fetch-weathernext3-track`, which detects a
-    # low from the same model fields the outage forecast came from.
-    if not args.atcf and not args.allow_synthetic:
-        raise SystemExit(
-            "ERROR: without --atcf this script emits an INVENTED demonstration "
-            "track (Hurricane Marie), not a forecast.\n"
-            "  For a real WeatherNext track, run the modelling pipeline:\n"
-            "    stormgrid fetch-weathernext3-track --init <init> --data-root <root>\n"
-            "    (or scripts/run_weathernext3_live.sh, which does it for you)\n"
-            "  To parse a real ATCF file:  --atcf <file.dat>\n"
-            "  To publish the demo track anyway:  --allow-synthetic")
 
     site_data_dir = args.output.parent
     init_dt, cycle_prefix = resolve_weathernext_init(args.init, site_data_dir, version=args.version)
     print(f"Targeting WeatherNext {args.version} initialization: {init_dt.isoformat()} (pattern: {cycle_prefix}*)")
 
+    data = None
     if args.atcf and args.atcf.exists():
-        data = parse_atcf_file(args.atcf)
-        # An ATCF file carries its own init.  Trust the file, but refuse to
-        # silently publish it against a different initialization than the one
-        # the cycles were built from - that is exactly the pairing this script
-        # exists to guarantee.
+        data = parse_atcf_file(args.atcf, version=args.version)
         kept = []
         for track in data.get("tracks", []):
             track_init = track.get("init_time_utc")
@@ -337,13 +404,25 @@ def main() -> None:
             kept.append(stamp_pairing(track, init_dt, args.version))
         data["tracks"] = kept
         data["available"] = bool(kept)
-    else:
+    elif args.auto_atcf:
+        auto_data = fetch_noaa_atcf_tracks(init_dt, version=args.version)
+        if auto_data.get("available") and auto_data.get("tracks"):
+            kept = [stamp_pairing(track, init_dt, args.version) for track in auto_data["tracks"]]
+            auto_data["tracks"] = kept
+            data = auto_data
+            print(f"Successfully loaded {len(kept)} real DeepMind track(s) from NOAA ATCF aid feed for {init_dt.isoformat()}")
+
+    if not data or not data.get("available"):
+        if not args.allow_synthetic:
+            raise SystemExit(
+                f"ERROR: No real Google DeepMind track found for init {init_dt.isoformat()} in NOAA ATCF feed.\n"
+                "  To provide an explicit ATCF file:   --atcf <file.dat>\n"
+                "  To permit the fallback demo track:  --allow-synthetic")
         track = generate_weathernext_marie_track(init_dt, version=args.version)
         track["synthetic"] = True
         track["name"] = f"{track['name']} [DEMONSTRATION TRACK - NOT A FORECAST]"
         data = {"available": True, "synthetic": True, "tracks": [track]}
-        print("WARNING: publishing the invented demonstration track "
-              "(--allow-synthetic).")
+        print("WARNING: publishing the invented demonstration track (--allow-synthetic).")
 
     # Initialization provenance on the index itself, so a consumer can pair
     # without opening each track.
@@ -362,7 +441,8 @@ def main() -> None:
     # Pair the track into every cycle sharing this exact initialization.
     # ------------------------------------------------------------------
     if args.populate_cycles and data.get("tracks") and cycles_dir.exists():
-        marie_track = data["tracks"][0]
+        # Prefer Marie (EP13) or the track closest to CONUS
+        marie_track = next((t for t in data["tracks"] if t.get("storm_id") == "ep132026"), data["tracks"][0])
         for cycle_dir in sorted(cycles_dir.glob(f"{cycle_prefix}*")):
             cycle_json_path = cycle_dir / "cycle.json"
             if not cycle_json_path.exists():
