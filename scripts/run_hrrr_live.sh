@@ -79,7 +79,6 @@ esac
 [ "${lead_end}" -le 48 ] || die "--lead-end must be an integer from 0 through 48" 2
 
 resolve_pythons
-REQUIRE_CALIBRATION=1
 preflight_inputs
 say "Resolving the pinned model artifact"
 artifact_dir="$(require_artifact)"
@@ -113,18 +112,41 @@ if [ "${init_argument}" = auto ]; then
   # HRRR publishes a cycle over roughly an hour, so the newest initialization
   # is usually incomplete. Walking backwards is cheaper and more reliable than
   # guessing a single fixed lag.
+  #
+  # But a download can also fail because this machine is broken rather than
+  # because the cycle is not ready, and retrying five times turns a missing
+  # Python dependency into "no complete HRRR cycle" - a data diagnosis for a
+  # setup problem. Keep the first attempt's output and show it if every lag
+  # fails, so the real cause is visible.
+  first_failure=""
   for lag in 4 5 6 7 8; do
     candidate="$(candidate_init "${lag}")"
     note "trying ${candidate}"
-    if download_cycle "${candidate}"; then
+    attempt_log="$(mktemp "${TMPDIR:-/tmp}/sg-hrrr-XXXXXX")"
+    if download_cycle "${candidate}" >"${attempt_log}" 2>&1; then
+      cat "${attempt_log}"
+      rm -f "${attempt_log}"
       forecast_init="${candidate}"
       break
     fi
-    note "${candidate} was not complete; trying the prior cycle"
+    [ -n "${first_failure}" ] || first_failure="${attempt_log}"
+    [ "${first_failure}" = "${attempt_log}" ] || rm -f "${attempt_log}"
+    note "${candidate} did not download; trying the prior cycle"
   done
-  [ -n "${forecast_init}" ] \
-    || die "no complete HRRR cycle four to eight hours back. Retry later, or
-  pass an explicit --init." 5
+  if [ -z "${forecast_init}" ]; then
+    if [ -n "${first_failure}" ]; then
+      printf '\nWhat the first attempt actually said:\n' >&2
+      tail -15 "${first_failure}" | sed 's/^/  /' >&2
+      rm -f "${first_failure}"
+    fi
+    die "no HRRR cycle four to eight hours back could be downloaded.
+  If the output above is a Python error, this is a setup problem, not a
+  forecast-availability one:
+    ${W2G_ROOT}/scripts/bootstrap_local_stormgrid.sh --env-only
+  Otherwise the cycles are genuinely not published yet - retry later, or pass
+  an explicit --init." 5
+  fi
+  [ -n "${first_failure}" ] && rm -f "${first_failure}"
 else
   forecast_init="$(normalise_init "${init_argument}")"
   say "Downloading HRRR ${forecast_init}, forecast hours 0-${lead_end}"

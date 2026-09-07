@@ -11,10 +11,8 @@
 #
 #   data/products/run_report.json                          which artifact is pinned
 #   data/artifacts/<id>/                                   the frozen model
-#   data/processed/calibration.json                        HRRR gust calibration
 #   data/interim/eaglei/denominator/county_customers_*.parquet   customers per county
 #   data/raw/census/cb_2024_us_county_500k.zip             county geometry
-#   data/interim/{nlcd,eia861,elevation}/...               county covariates (optional)
 #
 # Re-running this is safe: existing files are refreshed, nothing is deleted.
 set -euo pipefail
@@ -46,12 +44,6 @@ Usage:
   --copy-only           copy the artifact and static inputs, build nothing
   -h, --help
 
-Copying file by file needs an ssh round trip per file. Over a slow link,
-pack one tarball on Prism instead and unpack it here:
-  (on Prism)  ./scripts/pack_live_inputs.sh
-  (here)      ./scripts/unpack_live_inputs.sh BUNDLE.tar.gz
-              ./scripts/bootstrap_local_stormgrid.sh --env-only
-
 After this finishes:
   ./scripts/run_hrrr_live.sh              (free, no credentials)
   ./scripts/run_weathernext3_live.sh --estimate
@@ -74,32 +66,85 @@ if [ -z "${SG_REPO_ROOT}" ] || [ ! -d "${SG_REPO_ROOT}" ]; then
 fi
 
 # ---------------------------------------------------------- environments ---
+# stormgrid requires Python >= 3.10. macOS ships 3.9.6 as /usr/bin/python3, so
+# a plain `python3 -m venv` builds an interpreter the package refuses to
+# install into - and the failure arrives at `pip install`, well after the venv
+# looks fine. Find a qualifying interpreter up front instead.
+find_python() {
+  local minimum_minor=10 candidate version
+  for candidate in python3.13 python3.12 python3.11 python3.10 \
+      /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 \
+      /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3.10 \
+      /usr/local/bin/python3.13 /usr/local/bin/python3.12 \
+      /usr/local/bin/python3.11 /usr/local/bin/python3.10 \
+      python3; do
+    command -v "${candidate}" >/dev/null 2>&1 || continue
+    version="$("${candidate}" -c 'import sys;print(sys.version_info[1])' 2>/dev/null || echo 0)"
+    if [ "${version}" -ge "${minimum_minor}" ] 2>/dev/null; then
+      command -v "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# A venv built by the wrong interpreter cannot be repaired by installing into
+# it; it has to be replaced.
+venv_python_ok() {
+  local venv_python=$1
+  [ -x "${venv_python}" ] || return 1
+  local minor
+  minor="$("${venv_python}" -c 'import sys;print(sys.version_info[1])' 2>/dev/null || echo 0)"
+  [ "${minor}" -ge 10 ] 2>/dev/null
+}
+
+build_venv() {
+  local target=$1 base_python=$2
+  if [ -d "${target}" ] && ! venv_python_ok "${target}/bin/python"; then
+    note "replacing ${target} (built by a Python older than 3.10)"
+    rm -rf "${target}"
+  fi
+  [ -d "${target}" ] || "${base_python}" -m venv "${target}"
+}
+
 if [ "${do_env}" -eq 1 ]; then
+  say "Locating a Python 3.10 or newer"
+  base_python="$(find_python)" || die "no Python 3.10+ found on this machine.
+  macOS ships 3.9.6, which stormgrid does not support. Install a newer one:
+    brew install python@3.12
+  then rerun this script." 3
+  note "$("${base_python}" -c 'import sys;print(f"{sys.executable}  ({sys.version.split()[0]})")')"
+
   say "Building the StormGrid environment"
+  build_venv "${SG_REPO_ROOT}/.venv" "${base_python}"
   sg_python="${SG_REPO_ROOT}/.venv/bin/python"
-  if [ ! -x "${sg_python}" ]; then
-    python3 -m venv "${SG_REPO_ROOT}/.venv"
-  fi
   "${sg_python}" -m pip install --quiet --upgrade pip
-  # Editable, so a `git pull` in stormgrid takes effect without reinstalling.
-  if ! "${sg_python}" -m pip install --quiet -e "${SG_REPO_ROOT}"; then
-    die "installing stormgrid failed. If it needs system libraries (GDAL/PROJ
-  for geopandas, eccodes for GRIB), install those first:
-    brew install gdal proj eccodes" 3
+
+  # Extras, not a bare install. `grib` decodes the HRRR GRIBs, `download`
+  # carries BigQuery, and bokeh_sampledata supplies the county polygons that
+  # build_counties falls back to when no Census shapefile is present - which
+  # is the normal case, since Prism has none either. A bare install imports
+  # fine and then fails at first use, which is the worst time to find out.
+  say "Installing stormgrid with the live extras"
+  if ! "${sg_python}" -m pip install -e "${SG_REPO_ROOT}[grib,download]" \
+        bokeh bokeh_sampledata; then
+    die "installing stormgrid failed. If a geospatial or GRIB wheel had to be
+  built from source, install the system libraries first:
+    brew install gdal proj eccodes
+  then rerun this script." 3
   fi
-  # The live paths need BigQuery and GRIB decoding; a training-only install
-  # will import fine and then fail mid-forecast, which is the worst time.
-  "${sg_python}" -m pip install --quiet \
-    google-cloud-bigquery google-cloud-bigquery-storage db-dtypes \
-    cfgrib xarray scipy || \
-    note "some live extras failed to install; check the message above"
-  note "$("${sg_python}" -c 'import stormgrid,sys;print(f"stormgrid ok on {sys.version.split()[0]}")')"
+
+  # Import the module the pipelines actually run. `import stormgrid` only
+  # touches a light __init__ and passes even when a dependency the CLI needs
+  # is absent.
+  "${sg_python}" -c 'import stormgrid.cli' \
+    || die "${sg_python} installed stormgrid but cannot import stormgrid.cli.
+  The traceback above names the missing dependency." 3
+  note "$("${sg_python}" -c 'import sys;print(f"stormgrid.cli imports on {sys.version.split()[0]}")')"
 
   say "Building the Weather2Grid export environment"
+  build_venv "${W2G_ROOT}/.venv" "${base_python}"
   w2g_python="${W2G_ROOT}/.venv/bin/python"
-  if [ ! -x "${w2g_python}" ]; then
-    python3 -m venv "${W2G_ROOT}/.venv"
-  fi
   "${w2g_python}" -m pip install --quiet --upgrade pip
   "${w2g_python}" -m pip install --quiet -r "${W2G_ROOT}/requirements-export.txt" pytest
   note "export environment ready"
@@ -129,11 +174,7 @@ note "pinned artifact: ${artifact_id}"
 # ------------------------------------------------------------------ copy ---
 mkdir -p "${SG_DATA_ROOT}/products" \
          "${SG_DATA_ROOT}/artifacts" \
-         "${SG_DATA_ROOT}/processed" \
          "${SG_DATA_ROOT}/interim/eaglei/denominator" \
-         "${SG_DATA_ROOT}/interim/nlcd" \
-         "${SG_DATA_ROOT}/interim/eia861" \
-         "${SG_DATA_ROOT}/interim/elevation" \
          "${SG_DATA_ROOT}/raw/census"
 
 say "Copying the run report"
@@ -153,17 +194,6 @@ else
           "${SG_DATA_ROOT}/artifacts/"
 fi
 
-say "Copying the HRRR gust calibration"
-# Mandatory for the HRRR path: prepare-hrrr-shadow reads it unconditionally and
-# raises if it is absent. The WeatherNext path does not use it - its 100 m wind
-# proxy is explicitly uncalibrated.
-scp -q "${REMOTE}:${REMOTE_DATA}/processed/calibration.json" \
-       "${SG_DATA_ROOT}/processed/calibration.json" \
-  || die "no ${REMOTE_DATA}/processed/calibration.json on ${REMOTE}. The HRRR
-  pipeline cannot run without it (fitted by \`stormgrid fit-calibration\`).
-  The WeatherNext pipeline can: rerun with --copy-only after removing HRRR from
-  your plans, or copy the file by hand." 4
-
 say "Copying the EAGLE-I customer denominator"
 scp -q "${REMOTE}:${REMOTE_DATA}/interim/eaglei/denominator/county_customers_*.parquet" \
        "${SG_DATA_ROOT}/interim/eaglei/denominator/" 2>/dev/null \
@@ -172,29 +202,6 @@ scp -q "${REMOTE}:${REMOTE_DATA}/interim/eaglei/denominator/county_customers_*.p
   || die "no customer denominator found on ${REMOTE} under
   ${REMOTE_DATA}/interim/eaglei/. Without it every county's outage count has no
   denominator and the adapters refuse to run." 4
-
-say "Copying county covariates (optional)"
-# Each of these has a national-median fallback, so a miss degrades resolution
-# rather than stopping the run - but the published risk then differs from what
-# Prism produced for the same weather, which is worth knowing about.
-for relative in "interim/nlcd/county_cover.parquet" \
-                "interim/eia861/county_saidi.parquet" \
-                "interim/elevation/county_elevation.parquet"; do
-  if scp -q "${REMOTE}:${REMOTE_DATA}/${relative}" \
-            "${SG_DATA_ROOT}/${relative}" 2>/dev/null; then
-    note "${relative}"
-  else
-    note "${relative} not on ${REMOTE}; national defaults will be used"
-  fi
-done
-
-say "Copying the site configuration (optional)"
-# scripts/hpc/site.env is gitignored, so it does not arrive with a clone, but
-# it is where WN3_GCP_PROJECT and WN3_BQ_DATASET are pinned.
-scp -q "${REMOTE}:${REMOTE_DATA%/data}/scripts/hpc/site.env" \
-       "${SG_REPO_ROOT}/scripts/hpc/site.env" 2>/dev/null \
-  && note "scripts/hpc/site.env" \
-  || note "no site.env on ${REMOTE}; set WN3_GCP_PROJECT and WN3_BQ_DATASET yourself"
 
 say "Copying the Census county shapefile"
 # Optional: build_counties falls back to a bundled outline. The fallback is
@@ -235,13 +242,6 @@ for candidate in (root / "interim/eaglei/denominator/county_customers_2022.parqu
         break
 else:
     raise SystemExit("FATAL: no customer denominator landed")
-
-calibration = root / "processed" / "calibration.json"
-if calibration.is_file():
-    from stormgrid.real_data import _load_calibrations
-    print(f"   calibration: {len(_load_calibrations(calibration))} HRRR version(s)")
-else:
-    print("   calibration: ABSENT - the HRRR pipeline will not run")
 PY
 else
   note "skipping (no StormGrid environment; rerun without --copy-only)"

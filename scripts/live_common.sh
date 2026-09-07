@@ -54,9 +54,34 @@ resolve_pythons() {
     python3 -m venv ${W2G_ROOT}/.venv
     ${W2G_PYTHON} -m pip install -r ${W2G_ROOT}/requirements-export.txt pytest" 2
   fi
-  "${SG_PYTHON}" -c 'import stormgrid' 2>/dev/null \
-    || die "${SG_PYTHON} cannot import stormgrid. Install it editable:
-    ${SG_PYTHON} -m pip install -e '${SG_REPO_ROOT}'" 2
+  # Check the module the pipelines actually run, not just the package. A bare
+  # `import stormgrid` only touches a light __init__, so a half-installed
+  # environment passes it and then dies inside the first real command - where
+  # the failure gets misread as a data problem rather than a setup one.
+  if ! "${SG_PYTHON}" -c 'import stormgrid.cli' 2>/dev/null; then
+    printf 'FATAL: %s cannot import stormgrid.cli:\n' "${SG_PYTHON}" >&2
+    # This command is expected to fail - that is the whole point of running it
+    # again. Without `|| true` its non-zero status trips `set -e` (pipefail
+    # propagates it through the pipeline) and kills the script mid-message,
+    # before the advice below is ever printed.
+    { "${SG_PYTHON}" -c 'import stormgrid.cli' 2>&1 || true; } \
+      | tail -3 | sed 's/^/  /' >&2
+    cat >&2 <<EOF
+
+  Rebuild the environment with the extras the live paths need:
+    ${W2G_ROOT}/scripts/bootstrap_local_stormgrid.sh --env-only
+EOF
+    exit 2
+  fi
+
+  local minor
+  minor="$("${SG_PYTHON}" -c 'import sys;print(sys.version_info[1])' 2>/dev/null || echo 0)"
+  if [ "${minor}" -lt 10 ] 2>/dev/null; then
+    die "${SG_PYTHON} is Python 3.${minor}; stormgrid needs 3.10 or newer.
+  macOS ships 3.9.6 as /usr/bin/python3. Rebuild against a newer one:
+    brew install python@3.12
+    ${W2G_ROOT}/scripts/bootstrap_local_stormgrid.sh --env-only" 2
+  fi
 }
 
 sg() { "${SG_PYTHON}" -m stormgrid.cli "$@"; }
@@ -91,14 +116,6 @@ PY
   done
   [ "${denominator_found}" -eq 1 ] \
     || problems+=("no EAGLE-I customer denominator under ${SG_DATA_ROOT}/interim/eaglei/denominator/")
-
-  # HRRR only. prepare-hrrr-shadow reads this unconditionally; the WeatherNext
-  # 100 m wind proxy is explicitly uncalibrated and never touches it, so the
-  # caller says whether this run needs it.
-  if [ "${REQUIRE_CALIBRATION:-0}" -eq 1 ] \
-      && [ ! -f "${SG_DATA_ROOT}/processed/calibration.json" ]; then
-    problems+=("no HRRR gust calibration at ${SG_DATA_ROOT}/processed/calibration.json")
-  fi
 
   if [ "${#problems[@]}" -gt 0 ]; then
     printf 'FATAL: this machine cannot run inference yet.\n' >&2
@@ -232,6 +249,60 @@ print("   pairing:         PASS")
 PY
 }
 
+# The exporter rebuilds site/data from the dashboard archive and prunes what
+# it does not see. So a dashboard archive that is missing an initialization the
+# live site is currently serving does not merely fail to add it - it removes
+# it, replacing the published run with an older one. That is a silent public
+# regression, and the usual cause is mundane: a bundle that was imported into
+# site/data on some earlier occasion but never into this machine's dashboard
+# archive. Snapshot before, compare after.
+LIVE_INITS_BEFORE=""
+snapshot_live_inits() {
+  local index="${W2G_ROOT}/site/data/cycles.json"
+  [ -f "${index}" ] || return 0
+  LIVE_INITS_BEFORE="$("${W2G_PYTHON}" - "${index}" <<'PY'
+import json, sys
+from pathlib import Path
+print("\n".join(sorted({c["issued_utc"] for c in
+                        json.loads(Path(sys.argv[1]).read_text())})))
+PY
+)"
+}
+
+assert_no_init_regression() {
+  [ -n "${LIVE_INITS_BEFORE}" ] || return 0
+  say "Checking no published initialization was dropped"
+  local after lost
+  after="$("${W2G_PYTHON}" - "${W2G_ROOT}/site/data/cycles.json" <<'PY'
+import json, sys
+from pathlib import Path
+print("\n".join(sorted({c["issued_utc"] for c in
+                        json.loads(Path(sys.argv[1]).read_text())})))
+PY
+)"
+  lost="$(comm -23 <(printf '%s\n' "${LIVE_INITS_BEFORE}") <(printf '%s\n' "${after}") || true)"
+  if [ -n "${lost}" ]; then
+    printf 'FATAL: this export would remove initializations the live site is serving:\n' >&2
+    printf '  %s\n' ${lost} >&2
+    cat >&2 <<EOF
+
+  The dashboard archive at
+    ${DASHBOARD_DIR}
+  does not contain them, and the exporter prunes what it cannot see - so
+  publishing now would roll the public site back to an older run.
+
+  Import the missing bundle into the archive first, then rerun:
+    ls ${W2G_ROOT}/latest/
+    ${SG_REPO_ROOT}/scripts/import_dashboard_bundle.sh <bundle> --data-root ${SG_DATA_ROOT}
+
+  site/data has been rewritten in your working tree but nothing is committed.
+  Discard it with:  git -C ${W2G_ROOT} checkout -- site/data
+EOF
+    exit 6
+  fi
+  note "all previously published initializations survive"
+}
+
 # --------------------------------------------------------------- publish ---
 # The workstation half already exists and is careful: it refuses a dirty repo,
 # refuses a non-main branch, refuses to publish behind origin, runs the
@@ -257,9 +328,11 @@ publish_cycles() {
 # check is ours and has to happen against exported data. Export once here, so
 # both checks see the same bytes that would be committed.
 export_only() {
+  snapshot_live_inits
   say "Exporting ${DASHBOARD_DIR} -> ${W2G_ROOT}/site/data"
   SG_DATA_ROOT="${SG_DATA_ROOT}" SG_WEATHER2GRID_REPO="${W2G_ROOT}" \
     "${SG_REPO_ROOT}/scripts/export_weather2grid.sh"
+  assert_no_init_regression
 }
 
 print_footer() {
