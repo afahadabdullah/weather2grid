@@ -351,6 +351,10 @@ FOOT_SCRIPT = """
     try { localStorage.setItem('w2g_theme', next); } catch (error) { /* private mode */ }
   });
 })();
+</script>
+<script data-goatcounter="https://w2g.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+<script>
 """
 
 
