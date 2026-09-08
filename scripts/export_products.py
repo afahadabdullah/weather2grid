@@ -627,6 +627,7 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
     """Validate and completely build one not-yet-public snapshot."""
     now = datetime.now(timezone.utc)
     summaries: list[dict[str, Any]] = []
+    processed_cycles: set[str] = set()
     total_cycles = len(cycle_paths)
     for idx, risk_path in enumerate(cycle_paths, 1):
         source = risk_path.parent
