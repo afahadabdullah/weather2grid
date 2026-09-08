@@ -5,3 +5,20 @@ __pycache__/
 *.py[cod]
 latest/
 historical/
+
+# Trained model weights, binaries, and transfer artifacts (must remain strictly local)
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.bin
+*.ckpt
+*.h5
+*.onnx
+*.joblib
+*.tar.gz
+*.tar.gz.sha256
+models/
+artifacts/
+server.log
+
