@@ -33,6 +33,7 @@ event_name="CONUS wind outlook"
 lead_end="${SG_LIVE_LEAD_END:-18}"
 do_push=0
 want_track=1
+force=0
 message=""
 
 usage() {
@@ -46,6 +47,7 @@ Usage:
   --event-name TEXT     default: "CONUS wind outlook"
   --lead-end N          last forecast hour, 0-48   (default: 18)
   --no-storm-track      skip the MSLMA download and surface-low detection
+  --force               re-run inference even if this initialization is already live
   --message TEXT        commit message override
   --push                commit and push after the gate passes
   -h, --help
@@ -67,6 +69,7 @@ while [ $# -gt 0 ]; do
     --lead-end) lead_end="${2:?--lead-end needs a value}"; shift 2 ;;
     --message) message="${2:?--message needs text}"; shift 2 ;;
     --no-storm-track) want_track=0; shift ;;
+    --force) force=1; shift ;;
     --push) do_push=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument $1" 2 ;;
@@ -121,6 +124,24 @@ if [ "${init_argument}" = auto ]; then
   first_failure=""
   for lag in 4 5 6 7 8; do
     candidate="$(candidate_init "${lag}")"
+    if [ "${force}" -eq 0 ] && [ -f "${W2G_ROOT}/site/data/cycles.json" ]; then
+      is_live="$("${W2G_PYTHON}" - "${W2G_ROOT}/site/data/cycles.json" "${candidate}" <<'PY'
+import json, sys
+from pathlib import Path
+try:
+    cycles = json.loads(Path(sys.argv[1]).read_text())
+    inits = {c.get("issued_utc") for c in cycles if "hrrr" in c.get("cycle_id", "") and c.get("is_latest_initialization")}
+    print(1 if sys.argv[2] in inits else 0)
+except Exception:
+    print(0)
+PY
+      )"
+      if [ "${is_live}" = "1" ]; then
+        say "NOAA HRRR initialization ${candidate} is already published on the live dashboard."
+        note "Forecast is up to date. Skipping redundant download, inference, and export (use --force to re-run)."
+        exit 0
+      fi
+    fi
     note "trying ${candidate}"
     attempt_log="$(mktemp "${TMPDIR:-/tmp}/sg-hrrr-XXXXXX")"
     if download_cycle "${candidate}" >"${attempt_log}" 2>&1; then
@@ -149,6 +170,24 @@ if [ "${init_argument}" = auto ]; then
   [ -n "${first_failure}" ] && rm -f "${first_failure}"
 else
   forecast_init="$(normalise_init "${init_argument}")"
+  if [ "${force}" -eq 0 ] && [ -f "${W2G_ROOT}/site/data/cycles.json" ]; then
+    is_live="$("${W2G_PYTHON}" - "${W2G_ROOT}/site/data/cycles.json" "${forecast_init}" <<'PY'
+import json, sys
+from pathlib import Path
+try:
+    cycles = json.loads(Path(sys.argv[1]).read_text())
+    inits = {c.get("issued_utc") for c in cycles if "hrrr" in c.get("cycle_id", "") and c.get("is_latest_initialization")}
+    print(1 if sys.argv[2] in inits else 0)
+except Exception:
+    print(0)
+PY
+    )"
+    if [ "${is_live}" = "1" ]; then
+      say "NOAA HRRR initialization ${forecast_init} is already published on the live dashboard."
+      note "Forecast is up to date. Skipping redundant download, inference, and export (use --force to re-run)."
+      exit 0
+    fi
+  fi
   say "Downloading HRRR ${forecast_init}, forecast hours 0-${lead_end}"
   download_cycle "${forecast_init}" || die "the HRRR download failed for ${forecast_init}" 5
 fi

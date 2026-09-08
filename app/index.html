@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>StormGrid Live Forecast Automation</title>
+  <title>Weather2Grid Live Forecast Automation</title>
   <style>
     :root {
       --bg: #0b0f19;
@@ -465,7 +465,7 @@
     <div class="brand">
       <div class="brand-icon">🌀</div>
       <div class="brand-title">
-        <h1>StormGrid Live Control Center</h1>
+        <h1>Weather2Grid Live Control Center</h1>
         <p>Operational Forecast Orchestrator & Live Release Gate</p>
       </div>
     </div>
@@ -515,6 +515,10 @@
           <label class="option-pill">
             <input type="checkbox" id="opt-push" checked>
             <span>Deploy to GitHub</span>
+          </label>
+          <label class="option-pill">
+            <input type="checkbox" id="opt-force">
+            <span>Force Re-run</span>
           </label>
         </div>
 
@@ -761,6 +765,7 @@
         wnx3: document.getElementById('opt-wnx3').checked,
         cyclones: document.getElementById('opt-cyclones').checked,
         push: document.getElementById('opt-push').checked,
+        force: document.getElementById('opt-force').checked,
       };
 
       try {

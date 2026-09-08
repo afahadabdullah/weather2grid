@@ -115,6 +115,7 @@ class PipelineRunner:
 
         full_env = os.environ.copy()
         full_env["SG_SKIP_TESTS"] = "1"
+        full_env["PYTHONUNBUFFERED"] = "1"
         full_env["PAGER"] = "cat"
         if env:
             full_env.update(env)
@@ -203,10 +204,11 @@ class PipelineRunner:
         run_wnx3 = options.get("wnx3", True)
         run_cyclones = options.get("cyclones", True)
         do_push = options.get("push", True)
+        do_force = options.get("force", False)
 
         self.log("=======================================================")
-        self.log("🚀 StormGrid & Weather2Grid Live Forecast Pipeline")
-        self.log(f"Options: HRRR={run_hrrr}, WNX3={run_wnx3}, Cyclones={run_cyclones}, Push={do_push}")
+        self.log("🚀 Weather2Grid Live Forecast Pipeline")
+        self.log(f"Options: HRRR={run_hrrr}, WNX3={run_wnx3}, Cyclones={run_cyclones}, Push={do_push}, Force={do_force}")
         self.log("=======================================================")
 
         try:
@@ -229,9 +231,11 @@ class PipelineRunner:
                 self.update_stage("hrrr", "running", 30)
                 self.log("--> Stage 2: Ingesting latest NOAA HRRR and running inference...")
                 hrrr_script = W2G_ROOT / "scripts" / "run_hrrr_live.sh"
+                hrrr_cmd = ["/bin/bash", str(hrrr_script)]
+                if do_force:
+                    hrrr_cmd.append("--force")
                 
-                # Execute run_hrrr_live.sh without --push so it exports to interim products
-                success = self.run_command(["/bin/bash", str(hrrr_script)], cwd=W2G_ROOT, stage_id="hrrr")
+                success = self.run_command(hrrr_cmd, cwd=W2G_ROOT, stage_id="hrrr")
                 if not success and not self.cancelled:
                     raise RuntimeError("NOAA HRRR pipeline failed.")
                 self.update_stage("hrrr", "success", 100)
@@ -243,9 +247,11 @@ class PipelineRunner:
                 self.update_stage("wnx3", "running", 30)
                 self.log("--> Stage 3: Ingesting Google DeepMind WeatherNext 3 (12h rolling windows)...")
                 wnx3_script = W2G_ROOT / "scripts" / "run_weathernext3_live.sh"
+                wnx3_cmd = ["/bin/bash", str(wnx3_script)]
+                if do_force:
+                    wnx3_cmd.append("--force")
 
-                # Run without --push; will merge and prepare rolling windows
-                success = self.run_command(["/bin/bash", str(wnx3_script)], cwd=W2G_ROOT, stage_id="wnx3")
+                success = self.run_command(wnx3_cmd, cwd=W2G_ROOT, stage_id="wnx3")
                 if not success and not self.cancelled:
                     raise RuntimeError("WeatherNext 3 pipeline failed.")
                 self.update_stage("wnx3", "success", 100)
@@ -385,7 +391,7 @@ print("Track pairing: PASS")
                     self.state["progress"] = 100
                     self.state["end_time"] = time.time()
                 self.log("🎉 ALL PIPELINES COMPLETED SUCCESSFULLY!")
-                self._notify("StormGrid Live", "Forecast pipeline completed and published successfully!")
+                self._notify("Weather2Grid Live", "Forecast pipeline completed and published successfully!")
                 self._update_metrics()
 
         except Exception as e:
@@ -395,7 +401,7 @@ print("Track pairing: PASS")
                 self.state["status"] = "failed"
                 self.state["error_message"] = err
                 self.state["end_time"] = time.time()
-            self._notify("StormGrid Live Alert", f"Pipeline failed: {err}")
+            self._notify("Weather2Grid Live Alert", f"Pipeline failed: {err}")
         finally:
             with self.lock:
                 self.running = False

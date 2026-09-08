@@ -31,6 +31,7 @@ event_name="CONUS wind outlook"
 do_push=0
 estimate_only=0
 want_track=1
+force=0
 message=""
 
 usage() {
@@ -44,24 +45,10 @@ Usage:
   --no-cyclone-track    skip the MSLP storm-centre read (saves query bytes;
                         cycles publish with no WeatherNext track at all)
   --estimate            free BigQuery dry run for both reads, then stop
+  --force               re-run even if initialization is already published on dashboard
   --message TEXT        commit message override
   --push                commit and push after the gate passes
   -h, --help
-
-Environment (all optional, with working defaults):
-  SG_REPO_ROOT              stormgrid checkout          (default: ../stormgrid)
-  SG_DATA_ROOT              StormGrid data root         (default: <stormgrid>/data)
-  WN3_GCP_PROJECT           BigQuery billing project
-  WN3_BQ_DATASET            linked WeatherNext 3 dataset
-  WNX3_LEAD_END             last lead hour              (default: 168)
-  WNX3_WINDOW_HOURS         product window              (default: 24)
-  WNX3_STEP_HOURS           product step                (default: 12)
-  WN3_MAX_QUERY_BYTES       county-read budget
-  WN3_TRACK_BBOX            track domain                (default: -130,15,-55,55)
-  WN3_TRACK_GRID_STEP       track lattice degrees       (default: 0.5)
-  WN3_TRACK_MAX_QUERY_BYTES track-read budget           (default: 6e11)
-  WN3_TRACK_MSLP_FIELD      override pressure field discovery
-  WN3_TRACK_WIND_FIELDS     'gust' or 'u_field,v_field'
 EOF
 }
 
@@ -73,6 +60,7 @@ while [ $# -gt 0 ]; do
     --message) message="${2:?--message needs text}"; shift 2 ;;
     --no-cyclone-track) want_track=0; shift ;;
     --estimate) estimate_only=1; shift ;;
+    --force) force=1; shift ;;
     --push) do_push=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument $1" 2 ;;
@@ -160,6 +148,25 @@ cycle_stamp="$(cycle_stamp_for "${forecast_init}")"
 [ -n "${event_prefix}" ] || event_prefix="wn3x-conus-${cycle_stamp:0:8}"
 note "initialization ${forecast_init}"
 note "event prefix   ${event_prefix}"
+
+if [ "${force}" -eq 0 ] && [ -f "${W2G_ROOT}/site/data/cycles.json" ]; then
+  is_live="$("${W2G_PYTHON}" - "${W2G_ROOT}/site/data/cycles.json" "${forecast_init}" <<'PY'
+import json, sys
+from pathlib import Path
+try:
+    cycles = json.loads(Path(sys.argv[1]).read_text())
+    inits = {c.get("issued_utc") for c in cycles if "wn3" in c.get("cycle_id", "") and c.get("is_latest_initialization")}
+    print(1 if sys.argv[2] in inits else 0)
+except Exception:
+    print(0)
+PY
+  )"
+  if [ "${is_live}" = "1" ]; then
+    say "WeatherNext 3 initialization ${forecast_init} is already published on the live dashboard."
+    note "Forecast is up to date. Skipping redundant window processing and inference (use --force to re-run)."
+    exit 0
+  fi
+fi
 
 # --------------------------------------------------------------- windows ---
 # Every window below is built from this one extract, so they all share an

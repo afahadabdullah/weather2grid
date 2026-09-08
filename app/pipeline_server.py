@@ -151,7 +151,7 @@ class ReusableThreadingServer(ThreadingHTTPServer):
 
 def run_server(port: int = PORT):
     server = ReusableThreadingServer((HOST, port), PipelineRequestHandler)
-    print(f"StormGrid Pipeline Control Center running at http://{HOST}:{port}")
+    print(f"Weather2Grid Pipeline Control Center running at http://{HOST}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

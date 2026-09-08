@@ -627,9 +627,10 @@ def _build_snapshot(archive: Path, cycle_paths: list[Path],
     """Validate and completely build one not-yet-public snapshot."""
     now = datetime.now(timezone.utc)
     summaries: list[dict[str, Any]] = []
-    processed_cycles: set[str] = set()
-    for risk_path in cycle_paths:
+    total_cycles = len(cycle_paths)
+    for idx, risk_path in enumerate(cycle_paths, 1):
         source = risk_path.parent
+        print(f"  [{idx}/{total_cycles}] Exporting cycle {source.name}...", flush=True)
         processed_cycles.add(source.name)
         meta_path = source / "cycle.json"
         if not meta_path.exists():
