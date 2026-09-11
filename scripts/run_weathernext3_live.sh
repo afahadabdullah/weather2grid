@@ -153,13 +153,12 @@ if [ "${force}" -eq 0 ] && [ -f "${W2G_ROOT}/site/data/cycles.json" ]; then
   is_live="$("${W2G_PYTHON}" - "${W2G_ROOT}/site/data/cycles.json" "${forecast_init}" <<'PY'
 import json, sys
 from pathlib import Path
-import pandas as pd
+from datetime import datetime
 try:
     cycles = json.loads(Path(sys.argv[1]).read_text())
     inits = {c.get("issued_utc") for c in cycles if "wn3" in c.get("cycle_id", "") and c.get("is_latest_initialization")}
-    cand = pd.Timestamp(sys.argv[2])
-    cand_iso = cand.tz_localize("UTC") if cand.tzinfo is None else cand.tz_convert("UTC")
-    match = any(pd.Timestamp(i) == cand_iso for i in inits if i)
+    cand_dt = datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00"))
+    match = any(datetime.fromisoformat(i.replace("Z", "+00:00")) == cand_dt for i in inits if i)
     print(1 if match else 0)
 except Exception:
     print(0)

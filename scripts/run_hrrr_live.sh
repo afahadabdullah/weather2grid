@@ -102,10 +102,11 @@ download_cycle() {
 candidate_init() {
   "${SG_PYTHON}" - "$1" <<'PY'
 import sys
-import pandas as pd
+from datetime import datetime, timezone, timedelta
 lag = int(sys.argv[1])
-print((pd.Timestamp.now(tz="UTC").floor("h")
-       - pd.Timedelta(hours=lag)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+cand = now - timedelta(hours=lag)
+print(cand.strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
 }
 
@@ -128,13 +129,12 @@ if [ "${init_argument}" = auto ]; then
       is_live="$("${W2G_PYTHON}" - "${W2G_ROOT}/site/data/cycles.json" "${candidate}" <<'PY'
 import json, sys
 from pathlib import Path
-import pandas as pd
+from datetime import datetime
 try:
     cycles = json.loads(Path(sys.argv[1]).read_text())
     inits = {c.get("issued_utc") for c in cycles if "hrrr" in c.get("cycle_id", "") and c.get("is_latest_initialization")}
-    cand = pd.Timestamp(sys.argv[2])
-    cand_iso = cand.tz_localize("UTC") if cand.tzinfo is None else cand.tz_convert("UTC")
-    match = any(pd.Timestamp(i) == cand_iso for i in inits if i)
+    cand_dt = datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00"))
+    match = any(datetime.fromisoformat(i.replace("Z", "+00:00")) == cand_dt for i in inits if i)
     print(1 if match else 0)
 except Exception:
     print(0)
