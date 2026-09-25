@@ -4,7 +4,7 @@
   "event_name": "CONUS wind outlook — 24 h to +84 h (rolling)",
   "issued_utc": "2026-09-25T06:00:00+00:00",
   "lead_hours": 66.0,
-  "age_hours": 10.18,
+  "age_hours": 10.72,
   "freshness": "in validation mode",
   "synthetic": false,
   "release_gate_passed": false,
@@ -128,7 +128,7 @@
     "step_hours": 12.0,
     "windows_overlap": true,
     "cycle_id": "20260925T0600Z_wn3x-conus-20260925-h084",
-    "product_provenance_hash": "6905dbadb29ecec5e367164f379fadb5",
+    "product_provenance_hash": "616083ec4a67396f38296e4a5157895e",
     "event_name": "CONUS wind outlook — 24 h to +84 h (rolling)",
     "training_event_exclusions": [
       "OT20251228a36ecc"
@@ -158,14 +158,14 @@
     "members": 1,
     "counties": 3098,
     "regional": {
-      "expected": 99403.59262039795,
-      "p50": 90275.91543889837,
-      "p90": 151802.13079965935,
-      "p99": 260783.38134436318,
-      "p90_if_independent": 131554.74863704672,
-      "tail_understatement_ratio": 1.1539084097866676
+      "expected": 59310.60249578137,
+      "p50": 52848.79262976322,
+      "p90": 97735.51495854006,
+      "p99": 149334.04575071635,
+      "p90_if_independent": 103677.97337056723,
+      "tail_understatement_ratio": 0.94268350143393
     },
-    "generated_utc": "2026-09-25T16:06:08.244590+00:00",
+    "generated_utc": "2026-09-25T16:42:48.339523+00:00",
     "code_version": "0.0.1"
   }
 }
