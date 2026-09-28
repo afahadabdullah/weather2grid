@@ -9,6 +9,8 @@ import sys
 import json
 import time
 import queue
+import socket
+import urllib.request
 from pathlib import Path
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -148,9 +150,43 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
 class ReusableThreadingServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_REUSEPORT"):
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass
+        super().server_bind()
+
+
+def is_server_already_running(host: str, port: int) -> bool:
+    try:
+        req = urllib.request.Request(f"http://{host}:{port}/api/status")
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
 
 def run_server(port: int = PORT):
-    server = ReusableThreadingServer((HOST, port), PipelineRequestHandler)
+    if is_server_already_running(HOST, port):
+        print(f"Weather2Grid Pipeline Control Center is already running and active at http://{HOST}:{port}")
+        return
+
+    try:
+        server = ReusableThreadingServer((HOST, port), PipelineRequestHandler)
+    except OSError as e:
+        if e.errno == 48:
+            print(f"Port {port} is occupied. Retrying in 2 seconds...")
+            time.sleep(2)
+            if is_server_already_running(HOST, port):
+                print(f"Weather2Grid Pipeline Control Center is active at http://{HOST}:{port}")
+                return
+            server = ReusableThreadingServer((HOST, port), PipelineRequestHandler)
+        else:
+            raise
+
     print(f"Weather2Grid Pipeline Control Center running at http://{HOST}:{port}")
     try:
         server.serve_forever()
