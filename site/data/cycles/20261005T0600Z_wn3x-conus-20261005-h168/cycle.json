@@ -1,10 +1,10 @@
 {
   "cycle_id": "20261005T0600Z_wn3x-conus-20261005-h168",
   "event_id": "wn3x-conus-20261005-h168",
-  "event_name": "CONUS wind outlook \u2014 24 h to +168 h (rolling)",
+  "event_name": "CONUS wind outlook — 24 h to +168 h (rolling)",
   "issued_utc": "2026-10-05T06:00:00+00:00",
   "lead_hours": 150.0,
-  "age_hours": 11.78,
+  "age_hours": 12.95,
   "freshness": "in validation mode",
   "synthetic": false,
   "release_gate_passed": false,
@@ -129,7 +129,7 @@
     "windows_overlap": true,
     "cycle_id": "20261005T0600Z_wn3x-conus-20261005-h168",
     "product_provenance_hash": "957196c2c1823976b287dca52bc7a65d",
-    "event_name": "CONUS wind outlook \u2014 24 h to +168 h (rolling)",
+    "event_name": "CONUS wind outlook — 24 h to +168 h (rolling)",
     "training_event_exclusions": [
       "OT20251228a36ecc"
     ],
@@ -167,6 +167,5 @@
     },
     "generated_utc": "2026-10-05T17:45:08.459660+00:00",
     "code_version": "0.0.1"
-  },
-  "track_init_time_utc": "2026-10-05T06:00:00+00:00"
+  }
 }
