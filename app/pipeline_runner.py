@@ -15,7 +15,9 @@ from typing import Dict, Any, List, Optional, Callable
 
 # Standard repository paths
 APP_DIR = Path(__file__).resolve().parent
-W2G_ROOT = APP_DIR.parent
+# W2G_ROOT may be overridden so the server can run from a local (non-OneDrive)
+# copy of app/ while still operating on the real repository.
+W2G_ROOT = Path(os.environ["W2G_ROOT"]) if os.environ.get("W2G_ROOT") else APP_DIR.parent
 SG_ROOT = W2G_ROOT.parent / "stormgrid"
 W2G_ARCHIVE_ROOT = W2G_ROOT.parent / "weather2grid-archive"
 DATA_ROOT = SG_ROOT / "data"
@@ -437,4 +439,6 @@ print("Track pairing: PASS")
 
 # Global singleton instance
 runner = PipelineRunner()
-runner._update_metrics()
+# Read metrics in the background: these files live on OneDrive and can block
+# for minutes right after login, which must never delay the server binding.
+threading.Thread(target=runner._update_metrics, daemon=True).start()
