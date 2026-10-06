@@ -1,10 +1,10 @@
 {
-  "cycle_id": "20261005T1400Z_hrrr-conus-20261005",
-  "event_id": "hrrr-conus-20261005",
+  "cycle_id": "20261006T1200Z_hrrr-conus-20261006",
+  "event_id": "hrrr-conus-20261006",
   "event_name": "CONUS wind outlook",
-  "issued_utc": "2026-10-05T14:00:00+00:00",
+  "issued_utc": "2026-10-06T12:00:00+00:00",
   "lead_hours": 0.0,
-  "age_hours": 4.95,
+  "age_hours": 4.82,
   "freshness": "in validation mode",
   "synthetic": false,
   "release_gate_passed": false,
@@ -13,8 +13,8 @@
   "model_artifact_id": "bplus-d306fae20f",
   "hazard_source": "hrrr_forecast_calibrated_county_centroid",
   "forecast_provider": "NOAA HRRR via AWS Open Data",
-  "valid_start_utc": "2026-10-05T14:00:00+00:00",
-  "valid_end_utc": "2026-10-06T08:00:00+00:00",
+  "valid_start_utc": "2026-10-06T12:00:00+00:00",
+  "valid_end_utc": "2026-10-07T06:00:00+00:00",
   "forecast_window_hours": 18.0,
   "forecast_horizon_hours": 18.0,
   "input_lead_hours": [
@@ -49,7 +49,7 @@
   "display_frame_count": 1,
   "county_data_format": "w2g-columnar-v1",
   "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-  "geometry_path": "geometries/25e848ce7e2a2681.geojson",
+  "geometry_path": "geometries/8e89d06fb1e908bf.geojson",
   "track_available": true,
   "track_init_matches_cycle": true,
   "fields": {
@@ -118,11 +118,11 @@
   "meta": {
     "schema_version": "0.1.0",
     "geography_version": "2024-tiger-cb",
-    "event_id": "hrrr-conus-20261005",
+    "event_id": "hrrr-conus-20261006",
     "event_type": "other_wind",
-    "forecast_init_time_utc": "2026-10-05T14:00:00+00:00",
-    "valid_start_utc": "2026-10-05T14:00:00+00:00",
-    "valid_end_utc": "2026-10-06T08:00:00+00:00",
+    "forecast_init_time_utc": "2026-10-06T12:00:00+00:00",
+    "valid_start_utc": "2026-10-06T12:00:00+00:00",
+    "valid_end_utc": "2026-10-07T06:00:00+00:00",
     "lead_hours": 0.0,
     "forecast_provider": "NOAA HRRR via AWS Open Data",
     "hazard_source": "hrrr_forecast_calibrated_county_centroid",
@@ -131,7 +131,7 @@
     "impact_model_version": "0.1.0",
     "model_artifact_id": "bplus-d306fae20f",
     "training_data_cutoff_utc": "2026-01-01T00:00:00+00:00",
-    "input_provenance_hash": "6eee6af4229d7285cb0826008f1a118e",
+    "input_provenance_hash": "e4d25d4a797a05e8a01befb6fd84d9e4",
     "input_lead_hours": [
       0.0,
       1.0,
@@ -157,8 +157,8 @@
     "window_hours": null,
     "step_hours": null,
     "windows_overlap": false,
-    "cycle_id": "20261005T1400Z_hrrr-conus-20261005",
-    "product_provenance_hash": "832fe857d13824ae0a1422875e0847d9",
+    "cycle_id": "20261006T1200Z_hrrr-conus-20261006",
+    "product_provenance_hash": "67125a940f27fcb6495b90dc5673925b",
     "event_name": "CONUS wind outlook",
     "training_event_exclusions": [
       "OT20251228a36ecc"
@@ -183,19 +183,19 @@
     "eligibility": {
       "allowed": true,
       "basis": "chronological",
-      "detail": "cutoff 2026-01-01T00:00:00+00:00 < event start 2026-10-05T14:00:00+00:00"
+      "detail": "cutoff 2026-01-01T00:00:00+00:00 < event start 2026-10-06T12:00:00+00:00"
     },
     "members": 1,
     "counties": 3098,
     "regional": {
-      "expected": 211756.80891136779,
-      "p50": 196246.43273570944,
-      "p90": 306548.903390524,
-      "p99": 498964.8482312453,
-      "p90_if_independent": 297013.46106032445,
-      "tail_understatement_ratio": 1.0321044113494333
+      "expected": 198222.27430966852,
+      "p50": 184634.17205711332,
+      "p90": 277511.08598042966,
+      "p99": 431799.44643405353,
+      "p90_if_independent": 300787.2995339609,
+      "tail_understatement_ratio": 0.9226157035566485
     },
-    "generated_utc": "2026-10-05T18:49:14.184642+00:00",
+    "generated_utc": "2026-10-06T16:36:38.348700+00:00",
     "code_version": "0.0.1"
   }
 }
