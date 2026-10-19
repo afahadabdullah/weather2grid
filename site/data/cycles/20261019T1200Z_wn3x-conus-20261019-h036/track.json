@@ -1,0 +1,132 @@
+{
+  "available": true,
+  "source": "Google DeepMind WeatherNext 3 Cyclones (ATCF GDMI)",
+  "classification": "AI Tropical Cyclone Track Forecast (WeatherNext 3)",
+  "storm_id": "ep212026",
+  "name": "Cyclone EP212026 (WeatherNext AI)",
+  "basin": "EP",
+  "model": "WeatherNext 3 / GDMI",
+  "init_time_utc": "2026-10-19T12:00:00+00:00",
+  "current_index": 6,
+  "model_code": "GDMI",
+  "points": [
+    {
+      "lead_hours": 0,
+      "lat": 19.6,
+      "lon": -108.2,
+      "vmax_kt": 50.0,
+      "pmin_mb": 999.0,
+      "stage": "XX",
+      "r34_nm": 55.0,
+      "r50_nm": 15.0,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 6,
+      "lat": 19.3,
+      "lon": -108.2,
+      "vmax_kt": 46.0,
+      "pmin_mb": 999.0,
+      "stage": "XX",
+      "r34_nm": 33.0,
+      "r50_nm": 2.5,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 12,
+      "lat": 19.3,
+      "lon": -108.6,
+      "vmax_kt": 41.0,
+      "pmin_mb": 999.0,
+      "stage": "XX",
+      "r34_nm": 36.8,
+      "r50_nm": 2.8,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 18,
+      "lat": 19.2,
+      "lon": -108.6,
+      "vmax_kt": 36.0,
+      "pmin_mb": 1002.0,
+      "stage": "XX",
+      "r34_nm": 14.8,
+      "r50_nm": 0.0,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 24,
+      "lat": 19.4,
+      "lon": -109.3,
+      "vmax_kt": 30.0,
+      "pmin_mb": 1004.0,
+      "stage": "XX",
+      "r34_nm": 6.8,
+      "r50_nm": 0.0,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 30,
+      "lat": 19.4,
+      "lon": -109.4,
+      "vmax_kt": 29.0,
+      "pmin_mb": 1005.0,
+      "stage": "XX",
+      "r34_nm": 2.2,
+      "r50_nm": 0.0,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 36,
+      "lat": 19.7,
+      "lon": -109.8,
+      "vmax_kt": 25.0,
+      "pmin_mb": 1006.0,
+      "stage": "XX",
+      "r34_nm": 2.5,
+      "r50_nm": 0.0,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 42,
+      "lat": 19.7,
+      "lon": -109.7,
+      "vmax_kt": 24.0,
+      "pmin_mb": 1007.0,
+      "stage": "XX",
+      "r34_nm": 0.0,
+      "r50_nm": 0.0,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 48,
+      "lat": 20.1,
+      "lon": -110.1,
+      "vmax_kt": 22.0,
+      "pmin_mb": 1007.0,
+      "stage": "XX",
+      "r34_nm": 0.0,
+      "r50_nm": 0.0,
+      "r64_nm": 0.0
+    },
+    {
+      "lead_hours": 60,
+      "lat": 20.5,
+      "lon": -110.3,
+      "vmax_kt": 19.0,
+      "pmin_mb": 9999.0,
+      "stage": "XX",
+      "r34_nm": 0.0,
+      "r50_nm": 0.0,
+      "r64_nm": 0.0
+    }
+  ],
+  "forecast_init_time_utc": "2026-10-19T12:00:00+00:00",
+  "advisory_issued_utc": "2026-10-19T12:00:00+00:00",
+  "hazard_source": "weathernext3_100m_wind_proxy",
+  "forecast_provider": "Google DeepMind WeatherNext 3 via BigQuery",
+  "model_version": 3,
+  "pairing_key": "forecast_init_time_utc",
+  "cycle_id": "20261019T1200Z_wn3x-conus-20261019-h036",
+  "paired_cycle_issued_utc": "2026-10-19T12:00:00+00:00"
+}
